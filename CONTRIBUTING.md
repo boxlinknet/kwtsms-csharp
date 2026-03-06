@@ -23,8 +23,8 @@
 Integration tests hit the live kwtSMS API with `test_mode=true` (no credits consumed):
 
 ```bash
-export CSHARP_USERNAME=your_api_user
-export CSHARP_PASSWORD=your_api_pass
+export CSHARP_USERNAME=csharp_username
+export CSHARP_PASSWORD=csharp_password
 dotnet test --filter "Category=Integration"
 ```
 
