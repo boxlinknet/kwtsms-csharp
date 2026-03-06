@@ -32,12 +32,31 @@ namespace KwtSMS.Cli
             {
                 sms = KwtSmsClient.FromEnv();
             }
-            catch (Exception ex)
+            catch
             {
-                Console.Error.WriteLine($"Error loading credentials: {ex.Message}");
-                Console.Error.WriteLine("Set KWTSMS_USERNAME and KWTSMS_PASSWORD environment variables or create a .env file.");
-                Console.Error.WriteLine("Run 'kwtsms setup' to create a .env file interactively.");
-                return 1;
+                var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+                if (!File.Exists(envPath))
+                {
+                    Console.WriteLine("No .env file found. Starting first-time setup...");
+                    Console.WriteLine();
+                    var setupResult = RunSetup();
+                    if (setupResult != 0) return setupResult;
+                    try
+                    {
+                        sms = KwtSmsClient.FromEnv();
+                    }
+                    catch (Exception ex2)
+                    {
+                        Console.Error.WriteLine($"Error: {ex2.Message}");
+                        return 1;
+                    }
+                }
+                else
+                {
+                    Console.Error.WriteLine("Error: credentials missing or incomplete in .env");
+                    Console.Error.WriteLine("Run 'kwtsms setup' to fix.");
+                    return 1;
+                }
             }
 
             try
@@ -120,45 +139,203 @@ EXAMPLES:
         static int RunSetup()
         {
             var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+
+            // Load existing .env values as defaults
+            var existing = new Dictionary<string, string>();
             if (File.Exists(envPath))
             {
-                Console.Write(".env file already exists. Overwrite? [y/N] ");
-                var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
-                if (answer != "y" && answer != "yes")
+                try
                 {
-                    Console.WriteLine("Aborted.");
-                    return 0;
+                    foreach (var rawLine in File.ReadAllLines(envPath))
+                    {
+                        var line = rawLine.Trim();
+                        if (string.IsNullOrEmpty(line) || line.StartsWith("#")) continue;
+                        var eq = line.IndexOf('=');
+                        if (eq < 0) continue;
+                        var key = line.Substring(0, eq).Trim();
+                        var val = line.Substring(eq + 1).Trim();
+                        if (!string.IsNullOrEmpty(key)) existing[key] = val;
+                    }
                 }
+                catch { /* ignore parse errors */ }
             }
 
-            Console.WriteLine("kwtSMS Setup");
-            Console.WriteLine("============");
-            Console.WriteLine("Enter your API credentials from kwtsms.com -> Account -> API.");
+            Console.WriteLine();
+            Console.WriteLine("── kwtSMS Setup ──────────────────────────────────────────────────");
+            Console.WriteLine("Verifies your API credentials and creates a .env file.");
+            Console.WriteLine("Press Enter to keep the value shown in brackets.");
             Console.WriteLine();
 
-            Console.Write("API Username: ");
+            // Username
+            var defaultUser = existing.GetValueOrDefault("KWTSMS_USERNAME", "");
+            var userPrompt = !string.IsNullOrEmpty(defaultUser)
+                ? $"API Username [{defaultUser}]: "
+                : "API Username: ";
+            Console.Write(userPrompt);
             var username = Console.ReadLine()?.Trim() ?? "";
+            if (string.IsNullOrEmpty(username)) username = defaultUser;
 
-            Console.Write("API Password: ");
-            var password = Console.ReadLine()?.Trim() ?? "";
+            // Password
+            var defaultPass = existing.GetValueOrDefault("KWTSMS_PASSWORD", "");
+            string password;
+            if (!string.IsNullOrEmpty(defaultPass))
+            {
+                Console.Write("API Password [keep existing]: ");
+                var rawPass = Console.ReadLine()?.Trim() ?? "";
+                password = !string.IsNullOrEmpty(rawPass) ? rawPass : defaultPass;
+            }
+            else
+            {
+                Console.Write("API Password: ");
+                password = Console.ReadLine()?.Trim() ?? "";
+            }
 
-            Console.Write("Sender ID [KWT-SMS]: ");
-            var senderId = Console.ReadLine()?.Trim();
-            if (string.IsNullOrEmpty(senderId)) senderId = "KWT-SMS";
+            if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+            {
+                Console.WriteLine();
+                Console.WriteLine("Error: username and password are required.");
+                return 1;
+            }
 
-            Console.Write("Test mode? (messages queued but not delivered) [Y/n]: ");
-            var testInput = Console.ReadLine()?.Trim().ToLowerInvariant();
-            var testMode = testInput != "n" && testInput != "no" ? "1" : "0";
+            return RunSetupContinue(envPath, existing, username, password);
+        }
 
-            var content = $"KWTSMS_USERNAME={username}\nKWTSMS_PASSWORD={password}\nKWTSMS_SENDER_ID={senderId}\nKWTSMS_TEST_MODE={testMode}\nKWTSMS_LOG_FILE=kwtsms.log\n";
-            File.WriteAllText(envPath, content);
+        static int RunSetupContinue(string envPath, Dictionary<string, string> existing, string username, string password)
+        {
+            // Verify credentials
+            Console.Write("\nVerifying credentials... ");
+            try
+            {
+                var tempClient = new KwtSmsClient(username, password, logFile: "");
+                var (ok, balance, error) = tempClient.Verify();
+                if (ok)
+                {
+                    Console.WriteLine($"OK  (Balance: {balance})");
+                }
+                else
+                {
+                    Console.WriteLine($"FAILED");
+                    Console.Error.WriteLine($"Error: {error}");
+                    return 1;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"FAILED");
+                Console.Error.WriteLine($"Error: {ex.Message}");
+                return 1;
+            }
 
+            // Fetch Sender IDs
+            Console.Write("Fetching Sender IDs... ");
+            var senderIds = new List<string>();
+            try
+            {
+                var tempClient = new KwtSmsClient(username, password, logFile: "");
+                var sidResult = tempClient.SenderIds();
+                if (sidResult.Result == "OK")
+                    senderIds = sidResult.SenderIds;
+            }
+            catch { /* ignore */ }
+
+            string senderId;
+            if (senderIds.Count > 0)
+            {
+                Console.WriteLine("OK");
+                Console.WriteLine();
+                Console.WriteLine("Available Sender IDs:");
+                for (int i = 0; i < senderIds.Count; i++)
+                    Console.WriteLine($"  {i + 1}. {senderIds[i]}");
+
+                var defaultSid = existing.GetValueOrDefault("KWTSMS_SENDER_ID", senderIds[0]);
+                Console.Write($"\nSelect Sender ID (number or name) [{defaultSid}]: ");
+                var choice = Console.ReadLine()?.Trim() ?? "";
+                if (int.TryParse(choice, out var idx) && idx >= 1 && idx <= senderIds.Count)
+                    senderId = senderIds[idx - 1];
+                else if (!string.IsNullOrEmpty(choice))
+                    senderId = choice;
+                else
+                    senderId = defaultSid;
+            }
+            else
+            {
+                Console.WriteLine("(none returned)");
+                var defaultSid = existing.GetValueOrDefault("KWTSMS_SENDER_ID", "KWT-SMS");
+                Console.Write($"Sender ID [{defaultSid}]: ");
+                var sidInput = Console.ReadLine()?.Trim() ?? "";
+                senderId = !string.IsNullOrEmpty(sidInput) ? sidInput : defaultSid;
+            }
+
+            // Send mode
+            var currentMode = existing.GetValueOrDefault("KWTSMS_TEST_MODE", "1");
             Console.WriteLine();
-            Console.WriteLine($"Saved to {envPath}");
-            Console.WriteLine("Run 'kwtsms verify' to test your credentials.");
+            Console.WriteLine("Send mode:");
+            Console.WriteLine("  1. Test mode: messages queued but NOT delivered, no credits consumed  [default]");
+            Console.WriteLine("  2. Live mode: messages delivered to handsets, credits consumed");
+            var modeDefault = currentMode != "0" ? "1" : "2";
+            Console.Write($"\nChoose [{modeDefault}]: ");
+            var modeChoice = Console.ReadLine()?.Trim() ?? "";
+            if (string.IsNullOrEmpty(modeChoice)) modeChoice = modeDefault;
+            var testMode = modeChoice == "2" ? "0" : "1";
 
             if (testMode == "1")
-                Console.WriteLine("NOTE: Test mode is ON. Messages will be queued but NOT delivered.");
+                Console.WriteLine("  → Test mode selected.");
+            else
+                Console.WriteLine("  → Live mode selected. Real messages will be sent and credits consumed.");
+
+            // Log file
+            var defaultLog = existing.GetValueOrDefault("KWTSMS_LOG_FILE", "kwtsms.log");
+            Console.WriteLine();
+            Console.WriteLine("API logging (every API call is logged to a file, passwords are always masked):");
+            if (!string.IsNullOrEmpty(defaultLog))
+                Console.WriteLine($"  Current: {defaultLog}");
+            Console.WriteLine("  Type \"off\" to disable logging.");
+            Console.Write($"  Log file path [{(string.IsNullOrEmpty(defaultLog) ? "off" : defaultLog)}]: ");
+            var logInput = Console.ReadLine()?.Trim() ?? "";
+            string logFile;
+            if (logInput.Equals("off", StringComparison.OrdinalIgnoreCase))
+            {
+                logFile = "";
+                Console.WriteLine("  → Logging disabled.");
+            }
+            else if (!string.IsNullOrEmpty(logInput))
+                logFile = logInput;
+            else
+                logFile = defaultLog;
+
+            // Sanitize: strip newlines to prevent values from breaking .env format
+            username = username.Replace("\r", "").Replace("\n", "");
+            password = password.Replace("\r", "").Replace("\n", "");
+            senderId = senderId.Replace("\r", "").Replace("\n", "");
+            logFile = logFile.Replace("\r", "").Replace("\n", "");
+
+            // Write .env
+            var content = "# kwtSMS credentials, generated by kwtsms setup\n"
+                + $"KWTSMS_USERNAME={username}\n"
+                + $"KWTSMS_PASSWORD={password}\n"
+                + $"KWTSMS_SENDER_ID={senderId}\n"
+                + $"KWTSMS_TEST_MODE={testMode}\n"
+                + $"KWTSMS_LOG_FILE={logFile}\n";
+
+            try
+            {
+                File.WriteAllText(envPath, content);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"\nError writing {envPath}: {ex.Message}");
+                return 1;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine($"  Saved to {envPath}");
+            if (testMode == "1")
+                Console.WriteLine("  Mode: TEST: messages queued but not delivered (no credits consumed)");
+            else
+                Console.WriteLine("  Mode: LIVE: messages will be delivered and credits consumed");
+            Console.WriteLine("  Run 'kwtsms setup' at any time to change settings.");
+            Console.WriteLine("─────────────────────────────────────────────────────────────────");
+            Console.WriteLine();
 
             return 0;
         }
