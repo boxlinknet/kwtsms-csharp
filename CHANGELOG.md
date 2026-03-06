@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-03-06
+
+### Fixed
+
+- Fix NuGet pack failure caused by missing icon.png reference.
+- Updated dependencies via Dependabot (actions/checkout v6, actions/setup-dotnet v5, codeql-action v4, System.Text.Json 10.0.3, Microsoft.NET.Test.Sdk 18.3.0, xunit.runner.visualstudio 3.1.5).
+
 ## [0.1.0] - 2026-03-06
 
 ### Added
