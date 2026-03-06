@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using KwtSMS;
 
@@ -21,6 +22,11 @@ namespace KwtSMS.Cli
                 return 0;
             }
 
+            var command = args[0].ToLowerInvariant();
+
+            if (command == "setup")
+                return RunSetup();
+
             KwtSmsClient sms;
             try
             {
@@ -30,10 +36,9 @@ namespace KwtSMS.Cli
             {
                 Console.Error.WriteLine($"Error loading credentials: {ex.Message}");
                 Console.Error.WriteLine("Set KWTSMS_USERNAME and KWTSMS_PASSWORD environment variables or create a .env file.");
+                Console.Error.WriteLine("Run 'kwtsms setup' to create a .env file interactively.");
                 return 1;
             }
-
-            var command = args[0].ToLowerInvariant();
 
             try
             {
@@ -76,8 +81,9 @@ USAGE:
     kwtsms <command> [arguments] [options]
 
 COMMANDS:
+    setup                               Create .env file interactively
     verify                              Test credentials and show balance
-    balance                             Show available credits
+    balance                             Show available and purchased credits
     send <mobile> <message> [--sender ID]  Send SMS to one or more numbers
     validate <number> [number ...]      Validate phone numbers
     senderid                            List registered sender IDs
@@ -99,6 +105,7 @@ SETUP:
         KWTSMS_LOG_FILE=kwtsms.log      # optional, empty to disable
 
 EXAMPLES:
+    kwtsms setup
     kwtsms verify
     kwtsms balance
     kwtsms send 96598765432 ""Your OTP is: 123456""
@@ -110,12 +117,58 @@ EXAMPLES:
     kwtsms dlr f4c841adee210f31307633ceaebff2ec");
         }
 
+        static int RunSetup()
+        {
+            var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+            if (File.Exists(envPath))
+            {
+                Console.Write(".env file already exists. Overwrite? [y/N] ");
+                var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
+                if (answer != "y" && answer != "yes")
+                {
+                    Console.WriteLine("Aborted.");
+                    return 0;
+                }
+            }
+
+            Console.WriteLine("kwtSMS Setup");
+            Console.WriteLine("============");
+            Console.WriteLine("Enter your API credentials from kwtsms.com -> Account -> API.");
+            Console.WriteLine();
+
+            Console.Write("API Username: ");
+            var username = Console.ReadLine()?.Trim() ?? "";
+
+            Console.Write("API Password: ");
+            var password = Console.ReadLine()?.Trim() ?? "";
+
+            Console.Write("Sender ID [KWT-SMS]: ");
+            var senderId = Console.ReadLine()?.Trim();
+            if (string.IsNullOrEmpty(senderId)) senderId = "KWT-SMS";
+
+            Console.Write("Test mode? (messages queued but not delivered) [Y/n]: ");
+            var testInput = Console.ReadLine()?.Trim().ToLowerInvariant();
+            var testMode = testInput != "n" && testInput != "no" ? "1" : "0";
+
+            var content = $"KWTSMS_USERNAME={username}\nKWTSMS_PASSWORD={password}\nKWTSMS_SENDER_ID={senderId}\nKWTSMS_TEST_MODE={testMode}\nKWTSMS_LOG_FILE=kwtsms.log\n";
+            File.WriteAllText(envPath, content);
+
+            Console.WriteLine();
+            Console.WriteLine($"Saved to {envPath}");
+            Console.WriteLine("Run 'kwtsms verify' to test your credentials.");
+
+            if (testMode == "1")
+                Console.WriteLine("NOTE: Test mode is ON. Messages will be queued but NOT delivered.");
+
+            return 0;
+        }
+
         static int RunVerify(KwtSmsClient sms)
         {
             var (ok, balance, error) = sms.Verify();
             if (ok)
             {
-                Console.WriteLine($"OK");
+                Console.WriteLine("OK");
                 Console.WriteLine($"Balance:   {balance}");
                 Console.WriteLine($"Purchased: {sms.CachedPurchased}");
                 return 0;
@@ -129,15 +182,17 @@ EXAMPLES:
 
         static int RunBalance(KwtSmsClient sms)
         {
-            var balance = sms.Balance();
-            if (balance.HasValue)
+            // Verify first to get both available and purchased
+            var (ok, balance, error) = sms.Verify();
+            if (ok)
             {
-                Console.WriteLine($"{balance.Value}");
+                Console.WriteLine($"Available: {balance}");
+                Console.WriteLine($"Purchased: {sms.CachedPurchased}");
                 return 0;
             }
             else
             {
-                Console.Error.WriteLine("Failed to retrieve balance.");
+                Console.Error.WriteLine($"ERROR: {error}");
                 return 1;
             }
         }
@@ -148,6 +203,13 @@ EXAMPLES:
             {
                 Console.Error.WriteLine("Usage: kwtsms send <mobile> <message> [--sender ID]");
                 return 1;
+            }
+
+            // Test mode warning
+            if (sms.TestMode)
+            {
+                Console.WriteLine("WARNING: Test mode is ON. Message will be queued but NOT delivered to handset.");
+                Console.WriteLine();
             }
 
             var mobile = args[1];

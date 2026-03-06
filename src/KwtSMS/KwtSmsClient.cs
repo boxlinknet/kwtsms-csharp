@@ -74,6 +74,11 @@ namespace KwtSMS
         }
 
         /// <summary>
+        /// Whether test mode is enabled. When true, messages queue but are not delivered.
+        /// </summary>
+        public bool TestMode => _testMode;
+
+        /// <summary>
         /// Cached available balance from the last Verify() or successful Send() call.
         /// Null if no API call has been made yet.
         /// </summary>
