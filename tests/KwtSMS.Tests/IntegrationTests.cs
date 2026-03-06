@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Linq;
 using Xunit;
 using KwtSMS;
 
@@ -9,6 +11,7 @@ namespace KwtSMS.Tests
     /// Always uses test_mode=true (no credits consumed, messages not delivered).
     /// </summary>
     [Trait("Category", "Integration")]
+    [Collection("HttpClient")]
     public class IntegrationTests
     {
         private readonly string? _username;
@@ -231,6 +234,170 @@ namespace KwtSMS.Tests
             var result = client.Validate("96598765432", "+96512345678");
 
             Assert.Null(result.Error);
+        }
+
+        // ── Bulk Send: Client Library ──
+
+        [SkippableFact]
+        public void Integration_BulkSend_250Numbers_ClientLibrary()
+        {
+            SkipIfNoCredentials();
+            var client = CreateClient();
+
+            // 1. Record initial balance
+            var (verifyOk, initialBalance, verifyError) = client.Verify();
+            Assert.True(verifyOk, $"Verify failed: {verifyError}");
+            Assert.NotNull(initialBalance);
+            var balanceBefore = initialBalance!.Value;
+
+            // 2. Generate 250 numbers: 96599220000 to 96599220249
+            var numbers = new string[250];
+            for (int i = 0; i < 250; i++)
+                numbers[i] = (96599220000L + i).ToString();
+            var mobile = string.Join(",", numbers);
+
+            // 3. Single Send() call → internally batches into 200 + 50
+            var result = client.Send(mobile, "C# client bulk test (250 numbers, test mode)");
+
+            // 4. Verify result
+            Assert.Equal("OK", result.Result);
+            Assert.NotNull(result.MsgId);
+
+            // Should have 2 comma-separated msg-ids (batch 1: 200, batch 2: 50)
+            var msgIds = result.MsgId!.Split(',');
+            Assert.Equal(2, msgIds.Length);
+            foreach (var id in msgIds)
+                Assert.False(string.IsNullOrWhiteSpace(id), "Each msg-id should be non-empty");
+
+            // Numbers accepted should be 250
+            Assert.Equal(250, result.Numbers);
+
+            // Points charged should reflect 250 messages
+            Assert.NotNull(result.PointsCharged);
+            Assert.True(result.PointsCharged > 0, $"PointsCharged should be > 0, got {result.PointsCharged}");
+
+            // 5. Balance tracking
+            Assert.NotNull(result.BalanceAfter);
+            var balanceAfterSend = result.BalanceAfter!.Value;
+            // Balance should decrease by exactly PointsCharged
+            var expectedBalance = balanceBefore - result.PointsCharged!.Value;
+            Assert.True(expectedBalance == balanceAfterSend,
+                $"Balance before ({balanceBefore}) - PointsCharged ({result.PointsCharged}) = {expectedBalance}, but BalanceAfter = {balanceAfterSend}");
+            // CachedBalance should match the final balance
+            Assert.Equal(balanceAfterSend, client.CachedBalance);
+
+            // 6. Check status of each msg-id: ERR030 expected (test mode = stuck in queue)
+            foreach (var msgId in msgIds)
+            {
+                var status = client.Status(msgId.Trim());
+                Assert.Equal("ERROR", status.Result);
+                Assert.Equal("ERR030", status.Code);
+            }
+        }
+
+        // ── Bulk Send: CLI Tool ──
+
+        [SkippableFact]
+        public void Integration_BulkSend_250Numbers_CliTool()
+        {
+            SkipIfNoCredentials();
+
+            // 1. Generate 250 numbers: 96599220000 to 96599220249
+            var numbers = new string[250];
+            for (int i = 0; i < 250; i++)
+                numbers[i] = (96599220000L + i).ToString();
+            var mobile = string.Join(",", numbers);
+
+            // 2. Set KWTSMS env vars for CLI's FromEnv()
+            var originalOut = Console.Out;
+            var originalErr = Console.Error;
+
+            Environment.SetEnvironmentVariable("KWTSMS_USERNAME", _username);
+            Environment.SetEnvironmentVariable("KWTSMS_PASSWORD", _password);
+            Environment.SetEnvironmentVariable("KWTSMS_TEST_MODE", "1");
+            Environment.SetEnvironmentVariable("KWTSMS_LOG_FILE", "");
+
+            string sendStdout, sendStderr;
+            int sendExitCode;
+
+            var outWriter = new StringWriter();
+            var errWriter = new StringWriter();
+            Console.SetOut(outWriter);
+            Console.SetError(errWriter);
+            try
+            {
+                sendExitCode = KwtSMS.Cli.Program.Main(new[] { "send", mobile, "C# CLI bulk test (250 numbers)" });
+            }
+            finally
+            {
+                Console.SetOut(originalOut);
+                Console.SetError(originalErr);
+            }
+            sendStdout = outWriter.ToString();
+            sendStderr = errWriter.ToString();
+
+            // 3. Verify CLI send output
+            Assert.Equal(0, sendExitCode);
+            Assert.Contains("WARNING", sendStdout);
+            Assert.Contains("Test mode", sendStdout);
+            Assert.Contains("OK", sendStdout);
+            Assert.Contains("Message ID:", sendStdout);
+            Assert.Contains("Numbers:", sendStdout);
+            Assert.Contains("Balance after:", sendStdout);
+
+            // Numbers should show 250
+            var numbersLine = sendStdout.Split('\n')
+                .FirstOrDefault(l => l.Contains("Numbers:"));
+            Assert.NotNull(numbersLine);
+            Assert.Contains("250", numbersLine);
+
+            // 4. Extract msg-ids from "Message ID:     id1,id2"
+            var msgIdLine = sendStdout.Split('\n')
+                .FirstOrDefault(l => l.Contains("Message ID:"));
+            Assert.NotNull(msgIdLine);
+            var msgIdValue = msgIdLine!.Substring(msgIdLine.IndexOf("Message ID:") + "Message ID:".Length).Trim();
+            var msgIds = msgIdValue.Split(',');
+            Assert.Equal(2, msgIds.Length);
+
+            // 5. Check status of each msg-id via CLI → expect ERR030
+            foreach (var msgId in msgIds)
+            {
+                var trimmedId = msgId.Trim();
+                Assert.False(string.IsNullOrEmpty(trimmedId));
+
+                Environment.SetEnvironmentVariable("KWTSMS_USERNAME", _username);
+                Environment.SetEnvironmentVariable("KWTSMS_PASSWORD", _password);
+                Environment.SetEnvironmentVariable("KWTSMS_TEST_MODE", "1");
+                Environment.SetEnvironmentVariable("KWTSMS_LOG_FILE", "");
+
+                var statusOut = new StringWriter();
+                var statusErr = new StringWriter();
+                Console.SetOut(statusOut);
+                Console.SetError(statusErr);
+
+                int statusExitCode;
+                try
+                {
+                    statusExitCode = KwtSMS.Cli.Program.Main(new[] { "status", trimmedId });
+                }
+                finally
+                {
+                    Console.SetOut(originalOut);
+                    Console.SetError(originalErr);
+                }
+
+                var statusStderr = statusErr.ToString();
+
+                // ERR030 = message stuck in queue (expected for test mode)
+                Assert.Equal(1, statusExitCode);
+                Assert.Contains("ERR030", statusStderr);
+            }
+
+            // 6. Clean up env vars
+            Environment.SetEnvironmentVariable("KWTSMS_USERNAME", null);
+            Environment.SetEnvironmentVariable("KWTSMS_PASSWORD", null);
+            Environment.SetEnvironmentVariable("KWTSMS_TEST_MODE", null);
+            Environment.SetEnvironmentVariable("KWTSMS_LOG_FILE", null);
         }
     }
 }
