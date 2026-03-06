@@ -6,9 +6,9 @@ using KwtSMS;
 
 namespace KwtSMS.Cli
 {
-    class Program
+    public class Program
     {
-        static int Main(string[] args)
+        public static int Main(string[] args)
         {
             if (args.Length == 0 || args[0] == "--help" || args[0] == "-h")
             {
