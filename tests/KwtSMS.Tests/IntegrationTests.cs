@@ -50,7 +50,7 @@ namespace KwtSMS.Tests
         public void Integration_Verify_WrongCredentials()
         {
             SkipIfNoCredentials();
-            var client = new KwtSmsClient("wrong_user", "wrong_pass", testMode: true, logFile: "");
+            var client = new KwtSmsClient("csharp_wrong_user", "csharp_wrong_pass", testMode: true, logFile: "");
 
             var (ok, balance, error) = client.Verify();
 
