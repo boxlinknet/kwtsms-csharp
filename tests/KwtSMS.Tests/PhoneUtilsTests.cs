@@ -92,6 +92,69 @@ namespace KwtSMS.Tests
             Assert.Equal("96598765432", PhoneUtils.NormalizePhone("00096598765432"));
         }
 
+        [Fact]
+        public void NormalizePhone_ArabicIndicWithPlus()
+        {
+            // +٩٦٥٩٨٧٦٥٤٣٢
+            Assert.Equal("96598765432", PhoneUtils.NormalizePhone("+\u0669\u0666\u0665\u0669\u0668\u0667\u0666\u0665\u0664\u0663\u0662"));
+        }
+
+        [Fact]
+        public void NormalizePhone_ArabicIndicWithDoubleZero()
+        {
+            // ٠٠٩٦٥٩٨٧٦٥٤٣٢
+            Assert.Equal("96598765432", PhoneUtils.NormalizePhone("\u0660\u0660\u0669\u0666\u0665\u0669\u0668\u0667\u0666\u0665\u0664\u0663\u0662"));
+        }
+
+        [Fact]
+        public void NormalizePhone_ArabicIndicWithSpaces()
+        {
+            // ٩٦٥ ٩٨٧٦ ٥٤٣٢
+            Assert.Equal("96598765432", PhoneUtils.NormalizePhone("\u0669\u0666\u0665 \u0669\u0668\u0667\u0666 \u0665\u0664\u0663\u0662"));
+        }
+
+        [Fact]
+        public void NormalizePhone_ArabicIndicWithDashes()
+        {
+            // ٩٦٥-٩٨٧٦-٥٤٣٢
+            Assert.Equal("96598765432", PhoneUtils.NormalizePhone("\u0669\u0666\u0665-\u0669\u0668\u0667\u0666-\u0665\u0664\u0663\u0662"));
+        }
+
+        [Fact]
+        public void NormalizePhone_MixedArabicAndLatinDigits()
+        {
+            // ٩٦٥98765432
+            Assert.Equal("96598765432", PhoneUtils.NormalizePhone("\u0669\u0666\u066598765432"));
+        }
+
+        [Fact]
+        public void NormalizePhone_ExtendedArabicIndicWithPlus()
+        {
+            // +۹۶۵۹۸۷۶۵۴۳۲ (Farsi/Urdu digits)
+            Assert.Equal("96598765432", PhoneUtils.NormalizePhone("+\u06F9\u06F6\u06F5\u06F9\u06F8\u06F7\u06F6\u06F5\u06F4\u06F3\u06F2"));
+        }
+
+        [Fact]
+        public void NormalizePhone_ExtendedArabicIndicWithSpaces()
+        {
+            // ۹۶۵ ۹۸۷۶ ۵۴۳۲
+            Assert.Equal("96598765432", PhoneUtils.NormalizePhone("\u06F9\u06F6\u06F5 \u06F9\u06F8\u06F7\u06F6 \u06F5\u06F4\u06F3\u06F2"));
+        }
+
+        [Fact]
+        public void NormalizePhone_ArabicIndicSaudiNumber()
+        {
+            // ٩٦٦٥٥١٢٣٤٥٦٧
+            Assert.Equal("966551234567", PhoneUtils.NormalizePhone("\u0669\u0666\u0666\u0665\u0665\u0661\u0662\u0663\u0664\u0665\u0666\u0667"));
+        }
+
+        [Fact]
+        public void NormalizePhone_ArabicIndicUAENumber()
+        {
+            // ٩٧١٥٠٤٤٩٦٦٧٧
+            Assert.Equal("971504496677", PhoneUtils.NormalizePhone("\u0669\u0667\u0661\u0665\u0660\u0664\u0664\u0669\u0666\u0666\u0667\u0667"));
+        }
+
         // ── ValidatePhoneInput ──
 
         [Fact]
@@ -206,6 +269,59 @@ namespace KwtSMS.Tests
             var result = PhoneUtils.ValidatePhoneInput("  +96598765432  ");
             Assert.True(result.IsValid);
             Assert.Equal("96598765432", result.Normalized);
+        }
+
+        [Fact]
+        public void Validate_ArabicIndicWithPlus()
+        {
+            var result = PhoneUtils.ValidatePhoneInput("+\u0669\u0666\u0665\u0669\u0668\u0667\u0666\u0665\u0664\u0663\u0662");
+            Assert.True(result.IsValid);
+            Assert.Equal("96598765432", result.Normalized);
+        }
+
+        [Fact]
+        public void Validate_ExtendedArabicIndicDigits()
+        {
+            // ۹۶۵۹۸۷۶۵۴۳۲ (Farsi/Urdu digits)
+            var result = PhoneUtils.ValidatePhoneInput("\u06F9\u06F6\u06F5\u06F9\u06F8\u06F7\u06F6\u06F5\u06F4\u06F3\u06F2");
+            Assert.True(result.IsValid);
+            Assert.Equal("96598765432", result.Normalized);
+        }
+
+        [Fact]
+        public void Validate_ArabicIndicWithSpacesAndDashes()
+        {
+            // ٩٦٥-٩٨٧٦ ٥٤٣٢
+            var result = PhoneUtils.ValidatePhoneInput("\u0669\u0666\u0665-\u0669\u0668\u0667\u0666 \u0665\u0664\u0663\u0662");
+            Assert.True(result.IsValid);
+            Assert.Equal("96598765432", result.Normalized);
+        }
+
+        [Fact]
+        public void Validate_MixedArabicAndLatinDigits()
+        {
+            // ٩٦٥98765432
+            var result = PhoneUtils.ValidatePhoneInput("\u0669\u0666\u066598765432");
+            Assert.True(result.IsValid);
+            Assert.Equal("96598765432", result.Normalized);
+        }
+
+        [Fact]
+        public void Validate_ArabicIndicTooShort()
+        {
+            // ١٢٣ (too short after normalization)
+            var result = PhoneUtils.ValidatePhoneInput("\u0661\u0662\u0663");
+            Assert.False(result.IsValid);
+            Assert.Contains("too short", result.Error);
+        }
+
+        [Fact]
+        public void Validate_ArabicIndicSaudiNumber()
+        {
+            // ٩٦٦٥٥١٢٣٤٥٦٧
+            var result = PhoneUtils.ValidatePhoneInput("\u0669\u0666\u0666\u0665\u0665\u0661\u0662\u0663\u0664\u0665\u0666\u0667");
+            Assert.True(result.IsValid);
+            Assert.Equal("966551234567", result.Normalized);
         }
     }
 }

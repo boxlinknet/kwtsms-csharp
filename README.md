@@ -1,4 +1,4 @@
-# KwtSMS C# Client
+# kwtSMS C# Client
 
 [![CI](https://github.com/boxlinknet/kwtsms-csharp/actions/workflows/ci.yml/badge.svg)](https://github.com/boxlinknet/kwtsms-csharp/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/KwtSMS.svg)](https://www.nuget.org/packages/KwtSMS)
@@ -6,7 +6,46 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CodeQL](https://github.com/boxlinknet/kwtsms-csharp/actions/workflows/codeql.yml/badge.svg)](https://github.com/boxlinknet/kwtsms-csharp/actions/workflows/codeql.yml)
 
-C# client for the [kwtSMS](https://www.kwtsms.com) SMS gateway. Send SMS, check balance, validate numbers, and more. Zero dependencies on .NET 6+.
+C# client for the [kwtSMS API](https://www.kwtsms.com). Send SMS, check balance, validate numbers, list sender IDs, check coverage, get delivery reports. Zero dependencies on .NET 6+.
+
+## About kwtSMS
+
+kwtSMS is a Kuwaiti SMS gateway trusted by top businesses to deliver messages anywhere in the world, with private Sender ID, free API testing, non-expiring credits, and competitive flat-rate pricing. Secure, simple to integrate, built to last. Open a free account in under 1 minute, no paperwork or payment required. [Click here to get started](https://www.kwtsms.com/signup/)
+
+## Prerequisites
+
+You need the **.NET SDK** installed.
+
+### Step 1: Check if .NET is installed
+
+```bash
+dotnet --version
+```
+
+If you see a version number (6.0+), you're ready. If not, install .NET:
+
+- **All platforms:** Download from https://dotnet.microsoft.com/download
+- **macOS (Homebrew):** `brew install dotnet`
+- **Ubuntu/Debian:** `sudo apt install dotnet-sdk-8.0`
+- **Windows:** Download the installer from the link above
+
+### Step 2: Create a project (if you don't have one)
+
+```bash
+dotnet new console -n my-project && cd my-project
+```
+
+### Step 3: Install KwtSMS
+
+```bash
+dotnet add package KwtSMS
+```
+
+Or add to your `.csproj`:
+
+```xml
+<PackageReference Include="KwtSMS" Version="0.2.0" />
+```
 
 ## Install
 
@@ -170,6 +209,37 @@ foreach (var kvp in ApiErrors.Errors)
     Console.WriteLine($"{kvp.Key}: {kvp.Value}");
 ```
 
+## Phone Number Formats
+
+All formats are accepted and normalized automatically:
+
+| Input | Normalized | Valid? |
+|-------|-----------|--------|
+| `96598765432` | `96598765432` | Yes |
+| `+96598765432` | `96598765432` | Yes |
+| `0096598765432` | `96598765432` | Yes |
+| `965 9876 5432` | `96598765432` | Yes |
+| `965-9876-5432` | `96598765432` | Yes |
+| `(965) 98765432` | `96598765432` | Yes |
+| `\u0669\u0666\u0665\u0669\u0668\u0667\u0666\u0665\u0664\u0663\u0662` (Arabic-Indic) | `96598765432` | Yes |
+| `\u06F9\u06F6\u06F5\u06F9\u06F8\u06F7\u06F6\u06F5\u06F4\u06F3\u06F2` (Extended Arabic-Indic) | `96598765432` | Yes |
+| `123456` (too short) | rejected | No |
+| `user@gmail.com` | rejected | No |
+
+## Input Sanitization
+
+`MessageUtils.CleanMessage()` is called automatically by `Send()` before every API call. It prevents the #1 cause of "message sent but not received" support tickets:
+
+| Content | Effect without cleaning | What CleanMessage() does |
+|---------|------------------------|--------------------------|
+| Emojis | Stuck in queue, credits wasted, no error | Stripped |
+| Hidden control characters (BOM, zero-width space, soft hyphen) | Spam filter rejection or queue stuck | Stripped |
+| Arabic/Hindi numerals in body | OTP codes render inconsistently | Converted to Latin digits |
+| HTML tags | ERR027, message rejected | Stripped |
+| Directional marks (LTR, RTL) | May cause display issues | Stripped |
+
+Arabic letters and Arabic text are fully supported and never stripped.
+
 ## Error Handling
 
 Every error response includes a developer-friendly `Action` field:
@@ -326,14 +396,59 @@ BEFORE GOING LIVE:
 | [ErrorHandling](examples/ErrorHandling/) | Error codes, validation, cleaning |
 | [OtpProduction](examples/OtpProduction/) | Production OTP with rate limiting |
 
-## Links
+## Testing
 
-- [kwtSMS website](https://www.kwtsms.com)
-- [API documentation (PDF)](https://www.kwtsms.com/doc/KwtSMS.com_API_Documentation_v41.pdf)
-- [Implementation best practices](https://www.kwtsms.com/articles/sms-api-implementation-best-practices.html)
-- [Integration test checklist](https://www.kwtsms.com/articles/sms-api-integration-test-checklist.html)
-- [Sender ID help](https://www.kwtsms.com/sender-id-help.html)
-- [Support (WhatsApp)](https://wa.me/96599220322)
+```bash
+# Unit + mock tests (no credentials needed)
+dotnet test --filter "Category!=Integration"
+
+# Integration tests (real API, test mode, no credits consumed)
+export CSHARP_USERNAME=csharp_username
+export CSHARP_PASSWORD=csharp_password
+dotnet test --filter "Category=Integration"
+```
+
+## What's Handled Automatically
+
+- **Phone normalization**: `+`, `00`, spaces, dashes, dots, parentheses stripped. Arabic-Indic digits converted. Leading zeros removed.
+- **Duplicate phone removal**: If the same number appears multiple times (in different formats), it is sent only once.
+- **Message cleaning**: Emojis removed (surrogate-pair safe). Hidden control characters (BOM, zero-width spaces, directional marks) removed. HTML tags stripped. Arabic-Indic digits in message body converted to Latin.
+- **Batch splitting**: More than 200 numbers are automatically split into batches of 200 with 0.5s delay between batches.
+- **ERR013 retry**: Queue-full errors are automatically retried up to 3 times with exponential backoff (30s / 60s / 120s).
+- **Error enrichment**: Every API error response includes an `Action` field with a developer-friendly fix hint.
+- **Credential masking**: Passwords are always masked as `***` in log files. Never exposed.
+- **No exceptions**: All public methods return structured results. They never throw on API errors.
+
+## FAQ
+
+**1. My message was sent successfully (result: OK) but the recipient didn't receive it. What happened?**
+
+Check the **Sending Queue** at [kwtsms.com](https://www.kwtsms.com/login/). If your message is stuck there, it was accepted by the API but not dispatched. Common causes are emoji in the message, hidden characters from copy-pasting, or spam filter triggers. Delete it from the queue to recover your credits. Also verify that `test` mode is off (`KWTSMS_TEST_MODE=0`). Test messages are queued but never delivered.
+
+**2. What is the difference between Test mode and Live mode?**
+
+**Test mode** (`KWTSMS_TEST_MODE=1`) sends your message to the kwtSMS queue but does NOT deliver it to the handset. No SMS credits are consumed. Use this during development. **Live mode** (`KWTSMS_TEST_MODE=0`) delivers the message for real and deducts credits. Always develop in test mode and switch to live only when ready for production.
+
+**3. What is a Sender ID and why should I not use "KWT-SMS" in production?**
+
+A **Sender ID** is the name that appears as the sender on the recipient's phone (e.g., "MY-APP" instead of a random number). `KWT-SMS` is a shared test sender. It causes delivery delays, is blocked on Virgin Kuwait, and should never be used in production. Register your own private Sender ID through your kwtSMS account. For OTP/authentication messages, you need a **Transactional** Sender ID to bypass DND (Do Not Disturb) filtering.
+
+**4. I'm getting ERR003 "Authentication error". What's wrong?**
+
+You are using the wrong credentials. The API requires your **API username and API password**, NOT your account mobile number. Log in to [kwtsms.com](https://www.kwtsms.com/login/), go to Account, and check your API credentials. Also make sure you are using POST (not GET) and `Content-Type: application/json`.
+
+**5. Can I send to international numbers (outside Kuwait)?**
+
+International sending is **disabled by default** on kwtSMS accounts. Contact kwtSMS support to request activation for specific country prefixes. Use `Coverage()` to check which countries are currently active on your account. Be aware that activating international coverage increases exposure to automated abuse. Implement rate limiting and CAPTCHA before enabling.
+
+## Help & Support
+
+- **[kwtSMS FAQ](https://www.kwtsms.com/faq/)**: Answers to common questions about credits, sender IDs, OTP, and delivery
+- **[kwtSMS Support](https://www.kwtsms.com/support.html)**: Open a support ticket or browse help articles
+- **[Contact kwtSMS](https://www.kwtsms.com/#contact)**: Reach the kwtSMS team directly for Sender ID registration and account issues
+- **[API Documentation (PDF)](https://www.kwtsms.com/doc/KwtSMS.com_API_Documentation_v41.pdf)**: kwtSMS REST API v4.1 full reference
+- **[kwtSMS Dashboard](https://www.kwtsms.com/login/)**: Recharge credits, buy Sender IDs, view message logs, manage coverage
+- **[Other Integrations](https://www.kwtsms.com/integrations.html)**: Plugins and integrations for other platforms and languages
 
 ## License
 
