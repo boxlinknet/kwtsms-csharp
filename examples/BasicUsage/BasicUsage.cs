@@ -11,7 +11,7 @@ using KwtSMS;
 var sms = KwtSmsClient.FromEnv();
 
 // Option 2: Pass credentials directly
-// var sms = new KwtSmsClient("your_api_user", "your_api_pass", "YOUR-SENDERID", testMode: true);
+// var sms = new KwtSmsClient("csharp_username", "csharp_password", "YOUR-SENDERID", testMode: true);
 
 // Verify credentials and check balance
 var (ok, balance, error) = sms.Verify();

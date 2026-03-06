@@ -40,8 +40,8 @@ if (result.Result == "OK")
 Create a `.env` file in your project root:
 
 ```ini
-KWTSMS_USERNAME=your_api_user
-KWTSMS_PASSWORD=your_api_pass
+KWTSMS_USERNAME=csharp_username
+KWTSMS_PASSWORD=csharp_password
 KWTSMS_SENDER_ID=YOUR-SENDERID   # Use KWT-SMS for testing only
 KWTSMS_TEST_MODE=1                # 1=test (safe), 0=live
 KWTSMS_LOG_FILE=kwtsms.log        # or "" to disable
@@ -55,7 +55,7 @@ Add `.env` to your `.gitignore`:
 Or pass credentials directly:
 
 ```csharp
-var sms = new KwtSmsClient("your_api_user", "your_api_pass", "YOUR-SENDERID", testMode: true);
+var sms = new KwtSmsClient("csharp_username", "csharp_password", "YOUR-SENDERID", testMode: true);
 ```
 
 ## API Methods

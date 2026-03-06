@@ -12,8 +12,8 @@ Demonstrates connecting to the kwtSMS API, verifying credentials, and sending a 
 Create a `.env` file:
 
 ```ini
-KWTSMS_USERNAME=your_api_user
-KWTSMS_PASSWORD=your_api_pass
+KWTSMS_USERNAME=csharp_username
+KWTSMS_PASSWORD=csharp_password
 KWTSMS_SENDER_ID=KWT-SMS
 KWTSMS_TEST_MODE=1
 ```
