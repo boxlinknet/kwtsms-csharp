@@ -18,7 +18,7 @@ namespace KwtSMS.Cli
 
             if (args[0] == "--version" || args[0] == "-v")
             {
-                Console.WriteLine("kwtsms 0.2.0");
+                Console.WriteLine("kwtsms 0.3.0");
                 return 0;
             }
 

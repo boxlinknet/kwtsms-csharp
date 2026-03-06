@@ -100,7 +100,7 @@ namespace KwtSMS.Tests
             var (exit, stdout, _) = RunCli(new[] { "--version" });
             Assert.Equal(0, exit);
             Assert.Contains("kwtsms", stdout);
-            Assert.Contains("0.2.0", stdout);
+            Assert.Contains("0.3.0", stdout);
         }
 
         [Fact]
