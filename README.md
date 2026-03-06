@@ -377,6 +377,34 @@ BEFORE GOING LIVE:
 [ ] Transactional Sender ID for OTP (not promotional)
 ```
 
+## CLI
+
+Build and run the CLI from the repository:
+
+```bash
+dotnet run --project tools/KwtSMS.Cli -- verify
+dotnet run --project tools/KwtSMS.Cli -- balance
+dotnet run --project tools/KwtSMS.Cli -- send 96598765432 "Your OTP is: 123456"
+dotnet run --project tools/KwtSMS.Cli -- validate 96598765432 +96512345678
+dotnet run --project tools/KwtSMS.Cli -- senderid
+dotnet run --project tools/KwtSMS.Cli -- coverage
+dotnet run --project tools/KwtSMS.Cli -- status <msg-id>
+dotnet run --project tools/KwtSMS.Cli -- dlr <msg-id>
+```
+
+Commands:
+
+```
+kwtsms verify                                          # test credentials
+kwtsms balance                                         # show credits
+kwtsms senderid                                        # list sender IDs
+kwtsms coverage                                        # list active prefixes
+kwtsms send <mobile> <message> [--sender ID]           # send SMS
+kwtsms validate <number> [number ...]                  # validate numbers
+kwtsms status <msg-id>                                 # check status
+kwtsms dlr <msg-id>                                    # delivery report
+```
+
 ## Compatibility
 
 | Target | Dependencies |

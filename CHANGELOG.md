@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] - 2026-03-06
 
+### Added
+
+- CLI tool (`tools/KwtSMS.Cli`) with all commands: verify, balance, send, validate, senderid, coverage, status, dlr.
+- About kwtSMS section with signup link in README.
+- Prerequisites section with .NET install instructions.
+- Phone Number Formats table with Arabic-Indic examples.
+- Input Sanitization, What's Handled Automatically sections.
+- FAQ section (5 common questions) and Help & Support section.
+- 15 new test cases for Arabic-Indic phone numbers (total: 100 tests).
+
 ### Changed
 
+- README title: "kwtSMS C# Client" (lowercase kwtSMS).
 - Use `csharp_username` / `csharp_password` as credential placeholders across all docs, examples, and tests for multi-library disambiguation.
-- Added `tools/` to `.gitignore`.
 
 ## [0.1.1] - 2026-03-06
 
