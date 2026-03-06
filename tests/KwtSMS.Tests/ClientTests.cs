@@ -14,6 +14,7 @@ namespace KwtSMS.Tests
     /// Tests for KwtSmsClient using mocked HTTP responses.
     /// No network calls are made.
     /// </summary>
+    [Collection("HttpClient")]
     public class ClientTests : IDisposable
     {
         private readonly HttpClient _originalClient;

@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/KwtSMS/KwtSMS.csproj" />
+    <ProjectReference Include="../../tools/KwtSMS.Cli/KwtSMS.Cli.csproj" />
   </ItemGroup>
 
 </Project>
