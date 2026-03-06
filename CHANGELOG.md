@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-07
+
+### Added
+
+- Raw API example (`examples/RawApi/`): call every kwtSMS endpoint directly with HttpClient, no library needed.
+- CLI setup wizard: credential verification, sender ID selection, send mode menu, log file config, auto-setup on first run.
+- CLI tests: 20 test cases covering all CLI commands with mocked HTTP.
+- Live bulk send integration tests: 250 numbers (200+50 batches) for both client library and CLI tool.
+- Pre-flight balance check and exact credit verification in bulk tests.
+- `[Collection("HttpClient")]` test isolation for shared static state.
+
+### Changed
+
+- Use `csharp_wrong_user` / `csharp_wrong_pass` credential placeholders in tests.
+
 ## [0.2.0] - 2026-03-06
 
 ### Added
