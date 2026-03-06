@@ -2,6 +2,7 @@
 
 | Example | Description |
 |---------|-------------|
+| [RawApi](RawApi/) | Call every kwtSMS endpoint directly with HttpClient (no library needed) |
 | [BasicUsage](BasicUsage/) | Connect, verify credentials, send a single SMS |
 | [OtpFlow](OtpFlow/) | Send OTP codes with proper error handling and user-facing messages |
 | [BulkSms](BulkSms/) | Send to multiple numbers with auto-batching |

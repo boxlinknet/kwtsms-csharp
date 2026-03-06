@@ -422,6 +422,7 @@ Test mode prints a visible warning before sending. Errors print `action` guidanc
 
 | Example | Description |
 |---------|-------------|
+| [RawApi](examples/RawApi/) | Call every endpoint directly with HttpClient (no library needed) |
 | [BasicUsage](examples/BasicUsage/) | Connect, verify, send SMS |
 | [OtpFlow](examples/OtpFlow/) | OTP with proper error handling |
 | [BulkSms](examples/BulkSms/) | Auto-batching for >200 numbers |
