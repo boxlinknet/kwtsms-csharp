@@ -238,21 +238,26 @@ namespace KwtSMS.Tests
 
         // ── Bulk Send: Client Library ──
 
+        // 250 numbers × 1 page (short English message < 160 chars) = 250 credits per test
+        private const int BulkTestNumbers = 250;
+        private const int BulkTestExpectedCredits = 250;
+
         [SkippableFact]
         public void Integration_BulkSend_250Numbers_ClientLibrary()
         {
             SkipIfNoCredentials();
             var client = CreateClient();
 
-            // 1. Record initial balance
-            var (verifyOk, initialBalance, verifyError) = client.Verify();
-            Assert.True(verifyOk, $"Verify failed: {verifyError}");
-            Assert.NotNull(initialBalance);
-            var balanceBefore = initialBalance!.Value;
+            // 1. Check balance BEFORE starting — know exactly what we have
+            var balance = client.Balance();
+            Assert.NotNull(balance);
+            var balanceBefore = balance!.Value;
+            Skip.If(balanceBefore < BulkTestExpectedCredits,
+                $"Insufficient credits: have {balanceBefore}, need {BulkTestExpectedCredits}");
 
             // 2. Generate 250 numbers: 96599220000 to 96599220249
-            var numbers = new string[250];
-            for (int i = 0; i < 250; i++)
+            var numbers = new string[BulkTestNumbers];
+            for (int i = 0; i < BulkTestNumbers; i++)
                 numbers[i] = (96599220000L + i).ToString();
             var mobile = string.Join(",", numbers);
 
@@ -269,24 +274,21 @@ namespace KwtSMS.Tests
             foreach (var id in msgIds)
                 Assert.False(string.IsNullOrWhiteSpace(id), "Each msg-id should be non-empty");
 
-            // Numbers accepted should be 250
-            Assert.Equal(250, result.Numbers);
+            // Numbers accepted = 250
+            Assert.Equal(BulkTestNumbers, result.Numbers);
 
-            // Points charged should reflect 250 messages
-            Assert.NotNull(result.PointsCharged);
-            Assert.True(result.PointsCharged > 0, $"PointsCharged should be > 0, got {result.PointsCharged}");
+            // 5. Credit accounting — message is <160 chars English = 1 page = 1 credit/number
+            Assert.Equal(BulkTestExpectedCredits, result.PointsCharged);
 
-            // 5. Balance tracking
+            // 6. Balance tracking — must equal initial minus credits consumed
             Assert.NotNull(result.BalanceAfter);
             var balanceAfterSend = result.BalanceAfter!.Value;
-            // Balance should decrease by exactly PointsCharged
-            var expectedBalance = balanceBefore - result.PointsCharged!.Value;
-            Assert.True(expectedBalance == balanceAfterSend,
-                $"Balance before ({balanceBefore}) - PointsCharged ({result.PointsCharged}) = {expectedBalance}, but BalanceAfter = {balanceAfterSend}");
+            Assert.True(balanceBefore - BulkTestExpectedCredits == balanceAfterSend,
+                $"Expected {balanceBefore} - {BulkTestExpectedCredits} = {balanceBefore - BulkTestExpectedCredits}, got BalanceAfter = {balanceAfterSend}");
             // CachedBalance should match the final balance
             Assert.Equal(balanceAfterSend, client.CachedBalance);
 
-            // 6. Check status of each msg-id: ERR030 expected (test mode = stuck in queue)
+            // 7. Check status of each msg-id: ERR030 expected (test mode = stuck in queue)
             foreach (var msgId in msgIds)
             {
                 var status = client.Status(msgId.Trim());
@@ -302,13 +304,21 @@ namespace KwtSMS.Tests
         {
             SkipIfNoCredentials();
 
-            // 1. Generate 250 numbers: 96599220000 to 96599220249
-            var numbers = new string[250];
-            for (int i = 0; i < 250; i++)
+            // 1. Check balance BEFORE starting via client library
+            var client = CreateClient();
+            var balance = client.Balance();
+            Assert.NotNull(balance);
+            var balanceBefore = balance!.Value;
+            Skip.If(balanceBefore < BulkTestExpectedCredits,
+                $"Insufficient credits: have {balanceBefore}, need {BulkTestExpectedCredits}");
+
+            // 2. Generate 250 numbers: 96599220000 to 96599220249
+            var numbers = new string[BulkTestNumbers];
+            for (int i = 0; i < BulkTestNumbers; i++)
                 numbers[i] = (96599220000L + i).ToString();
             var mobile = string.Join(",", numbers);
 
-            // 2. Set KWTSMS env vars for CLI's FromEnv()
+            // 3. Set KWTSMS env vars for CLI's FromEnv()
             var originalOut = Console.Out;
             var originalErr = Console.Error;
 
@@ -336,22 +346,33 @@ namespace KwtSMS.Tests
             sendStdout = outWriter.ToString();
             sendStderr = errWriter.ToString();
 
-            // 3. Verify CLI send output
+            // 4. Verify CLI send output
             Assert.Equal(0, sendExitCode);
             Assert.Contains("WARNING", sendStdout);
             Assert.Contains("Test mode", sendStdout);
             Assert.Contains("OK", sendStdout);
             Assert.Contains("Message ID:", sendStdout);
-            Assert.Contains("Numbers:", sendStdout);
-            Assert.Contains("Balance after:", sendStdout);
 
             // Numbers should show 250
             var numbersLine = sendStdout.Split('\n')
                 .FirstOrDefault(l => l.Contains("Numbers:"));
             Assert.NotNull(numbersLine);
-            Assert.Contains("250", numbersLine);
+            Assert.Contains(BulkTestNumbers.ToString(), numbersLine);
 
-            // 4. Extract msg-ids from "Message ID:     id1,id2"
+            // 5. Credit accounting — verify exact points charged
+            var pointsLine = sendStdout.Split('\n')
+                .FirstOrDefault(l => l.Contains("Points charged:"));
+            Assert.NotNull(pointsLine);
+            Assert.Contains(BulkTestExpectedCredits.ToString(), pointsLine);
+
+            // 6. Balance tracking — verify BalanceAfter = BalanceBefore - 250
+            var balanceLine = sendStdout.Split('\n')
+                .FirstOrDefault(l => l.Contains("Balance after:"));
+            Assert.NotNull(balanceLine);
+            var expectedBalanceAfter = balanceBefore - BulkTestExpectedCredits;
+            Assert.Contains(expectedBalanceAfter.ToString(), balanceLine);
+
+            // 7. Extract msg-ids from "Message ID:     id1,id2"
             var msgIdLine = sendStdout.Split('\n')
                 .FirstOrDefault(l => l.Contains("Message ID:"));
             Assert.NotNull(msgIdLine);
@@ -359,7 +380,7 @@ namespace KwtSMS.Tests
             var msgIds = msgIdValue.Split(',');
             Assert.Equal(2, msgIds.Length);
 
-            // 5. Check status of each msg-id via CLI → expect ERR030
+            // 8. Check status of each msg-id via CLI → expect ERR030
             foreach (var msgId in msgIds)
             {
                 var trimmedId = msgId.Trim();
@@ -393,7 +414,7 @@ namespace KwtSMS.Tests
                 Assert.Contains("ERR030", statusStderr);
             }
 
-            // 6. Clean up env vars
+            // 9. Clean up env vars
             Environment.SetEnvironmentVariable("KWTSMS_USERNAME", null);
             Environment.SetEnvironmentVariable("KWTSMS_PASSWORD", null);
             Environment.SetEnvironmentVariable("KWTSMS_TEST_MODE", null);
