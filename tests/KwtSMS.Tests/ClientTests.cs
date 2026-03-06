@@ -1,0 +1,499 @@
+using System;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Xunit;
+using KwtSMS;
+
+namespace KwtSMS.Tests
+{
+    /// <summary>
+    /// Tests for KwtSmsClient using mocked HTTP responses.
+    /// No network calls are made.
+    /// </summary>
+    public class ClientTests : IDisposable
+    {
+        private readonly HttpClient _originalClient;
+
+        public ClientTests()
+        {
+            // Save original client to restore later
+            _originalClient = GetInternalClient();
+        }
+
+        public void Dispose()
+        {
+            // Restore original client
+            SetInternalClient(_originalClient);
+        }
+
+        private KwtSmsClient CreateClientWithMock(Func<HttpRequestMessage, HttpResponseMessage> handler)
+        {
+            var mockHandler = new MockHttpHandler(handler);
+            var mockClient = new HttpClient(mockHandler)
+            {
+                Timeout = TimeSpan.FromSeconds(15)
+            };
+            SetInternalClient(mockClient);
+            return new KwtSmsClient("testuser", "testpass", "TEST-SENDER", true, "");
+        }
+
+        private static HttpClient GetInternalClient()
+        {
+            return HttpRequest.Client;
+        }
+
+        private static void SetInternalClient(HttpClient client)
+        {
+            HttpRequest.Client = client;
+        }
+
+        // ── Verify tests ──
+
+        [Fact]
+        public void Verify_Success()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    result = "OK",
+                    available = 150.0,
+                    purchased = 1000.0
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var (ok, balance, error) = client.Verify();
+
+            Assert.True(ok);
+            Assert.Equal(150.0, balance);
+            Assert.Null(error);
+            Assert.Equal(150.0, client.CachedBalance);
+            Assert.Equal(1000.0, client.CachedPurchased);
+        }
+
+        [Fact]
+        public void Verify_WrongCredentials()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    result = "ERROR",
+                    code = "ERR003",
+                    description = "Authentication error, username or password are not correct."
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var (ok, balance, error) = client.Verify();
+
+            Assert.False(ok);
+            Assert.Null(balance);
+            Assert.Contains("Authentication error", error);
+        }
+
+        // ── Send tests ──
+
+        [Fact]
+        public void Send_Success()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["result"] = "OK",
+                    ["msg-id"] = "abc123",
+                    ["numbers"] = 1,
+                    ["points-charged"] = 1,
+                    ["balance-after"] = 149.0,
+                    ["unix-timestamp"] = 1684763355
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Send("96598765432", "Test message");
+
+            Assert.Equal("OK", result.Result);
+            Assert.Equal("abc123", result.MsgId);
+            Assert.Equal(1, result.Numbers);
+            Assert.Equal(1, result.PointsCharged);
+            Assert.Equal(149.0, result.BalanceAfter);
+            Assert.Equal(149.0, client.CachedBalance);
+        }
+
+        [Fact]
+        public void Send_InvalidNumber_LocalRejection()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Send("abc", "Test message");
+
+            Assert.Equal("ERROR", result.Result);
+            Assert.Equal("ERR_INVALID_INPUT", result.Code);
+        }
+
+        [Fact]
+        public void Send_EmptyMessage_AfterCleaning()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            // Only emojis, empty after cleaning
+            var result = client.Send("96598765432", "\U0001F600\U0001F601\U0001F602");
+
+            Assert.Equal("ERROR", result.Result);
+            Assert.Equal("ERR009", result.Code);
+        }
+
+        [Fact]
+        public void Send_MixedValidInvalid()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["result"] = "OK",
+                    ["msg-id"] = "mixed123",
+                    ["numbers"] = 1,
+                    ["points-charged"] = 1,
+                    ["balance-after"] = 148.0,
+                    ["unix-timestamp"] = 1684763355
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Send("96598765432,abc,user@email.com", "Test");
+
+            Assert.Equal("OK", result.Result);
+            Assert.NotNull(result.Invalid);
+            Assert.Equal(2, result.Invalid!.Count);
+        }
+
+        [Fact]
+        public void Send_DeduplicatesNumbers()
+        {
+            string? capturedBody = null;
+            var client = CreateClientWithMock(req =>
+            {
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+                var json = JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["result"] = "OK",
+                    ["msg-id"] = "dedup123",
+                    ["numbers"] = 1,
+                    ["points-charged"] = 1,
+                    ["balance-after"] = 147.0,
+                    ["unix-timestamp"] = 1684763355
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            // Same number in different formats
+            var result = client.Send("+96598765432,0096598765432,96598765432", "Test");
+
+            Assert.Equal("OK", result.Result);
+            // The body should contain the number only once
+            Assert.NotNull(capturedBody);
+            Assert.DoesNotContain(",", GetMobileFromBody(capturedBody!));
+        }
+
+        [Fact]
+        public void Send_ERR028_RateLimit()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    result = "ERROR",
+                    code = "ERR028",
+                    description = "Must wait 15s"
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Send("96598765432", "Test");
+
+            Assert.Equal("ERROR", result.Result);
+            Assert.Equal("ERR028", result.Code);
+            Assert.NotNull(result.Action);
+            Assert.Contains("15 seconds", result.Action);
+        }
+
+        [Fact]
+        public void Send_ERR010_ZeroBalance()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    result = "ERROR",
+                    code = "ERR010",
+                    description = "Zero balance"
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Send("96598765432", "Test");
+
+            Assert.Equal("ERROR", result.Result);
+            Assert.Contains("kwtsms.com", result.Action);
+        }
+
+        [Fact]
+        public void Send_NetworkError()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                throw new HttpRequestException("Connection refused");
+            });
+
+            var result = client.Send("96598765432", "Test");
+
+            Assert.Equal("ERROR", result.Result);
+        }
+
+        // ── Validate tests ──
+
+        [Fact]
+        public void Validate_Success()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["result"] = "OK",
+                    ["mobile"] = new Dictionary<string, object>
+                    {
+                        ["OK"] = new[] { "96598765432" },
+                        ["ER"] = new[] { "123" },
+                        ["NR"] = new[] { "966558724477" }
+                    }
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Validate("96598765432", "123", "966558724477");
+
+            Assert.Contains("96598765432", result.Ok);
+            Assert.Null(result.Error);
+        }
+
+        [Fact]
+        public void Validate_AllInvalid()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Validate("abc", "user@email.com");
+
+            Assert.Equal("No valid phone numbers to validate.", result.Error);
+            Assert.Equal(2, result.Rejected.Count);
+        }
+
+        // ── SenderIds tests ──
+
+        [Fact]
+        public void SenderIds_Success()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["result"] = "OK",
+                    ["senderid"] = new[] { "KWT-SMS", "MYAPP" }
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.SenderIds();
+
+            Assert.Equal("OK", result.Result);
+            Assert.Contains("KWT-SMS", result.SenderIds);
+            Assert.Contains("MYAPP", result.SenderIds);
+        }
+
+        // ── Coverage tests ──
+
+        [Fact]
+        public void Coverage_Success()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["result"] = "OK",
+                    ["prefixes"] = new[] { "965", "966", "971" }
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Coverage();
+
+            Assert.Equal("OK", result.Result);
+            Assert.Contains("965", result.Prefixes);
+        }
+
+        // ── Status tests ──
+
+        [Fact]
+        public void Status_Success()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    result = "OK",
+                    status = "sent",
+                    description = "Message successfully sent"
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Status("abc123");
+
+            Assert.Equal("OK", result.Result);
+            Assert.Equal("sent", result.Status);
+        }
+
+        [Fact]
+        public void Status_NotFound()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    result = "ERROR",
+                    code = "ERR029",
+                    description = "Message does not exist"
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Status("nonexistent");
+
+            Assert.Equal("ERROR", result.Result);
+            Assert.Equal("ERR029", result.Code);
+            Assert.NotNull(result.Action);
+        }
+
+        // ── DLR tests ──
+
+        [Fact]
+        public void Dlr_Success()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["result"] = "OK",
+                    ["report"] = new[]
+                    {
+                        new Dictionary<string, object>
+                        {
+                            ["Number"] = "96598765432",
+                            ["Status"] = "Received by recipient"
+                        }
+                    }
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Dlr("abc123");
+
+            Assert.Equal("OK", result.Result);
+            Assert.Single(result.Report);
+            Assert.Equal("96598765432", result.Report[0].Number);
+        }
+
+        [Fact]
+        public void Dlr_NoReports()
+        {
+            var client = CreateClientWithMock(req =>
+            {
+                var json = JsonSerializer.Serialize(new
+                {
+                    result = "ERROR",
+                    code = "ERR019",
+                    description = "No reports found"
+                });
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            var result = client.Dlr("abc123");
+
+            Assert.Equal("ERROR", result.Result);
+            Assert.Equal("ERR019", result.Code);
+        }
+
+        // ── Helper ──
+
+        private static string GetMobileFromBody(string body)
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.GetProperty("mobile").GetString() ?? "";
+        }
+    }
+}

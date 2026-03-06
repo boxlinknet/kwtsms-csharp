@@ -1,0 +1,40 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+build/
+bld/
+*.nupkg
+*.snupkg
+
+## IDE
+.vs/
+.vscode/
+*.swp
+*.swo
+*~
+.idea/
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Project specific
+.env
+.env.*
+*.log
+kwtsms.log
+
+## Claude / AI
+.claude/
+CLAUDE.md
+
+## PRD docs (internal only)
+docs/

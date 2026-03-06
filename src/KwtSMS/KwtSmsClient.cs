@@ -1,0 +1,782 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+
+namespace KwtSMS
+{
+    /// <summary>
+    /// C# client for the kwtSMS SMS gateway (kwtsms.com).
+    /// Thread-safe. Reuse a single instance across your application.
+    /// </summary>
+    public class KwtSmsClient
+    {
+        private readonly string _username;
+        private readonly string _password;
+        private readonly string _senderId;
+        private readonly bool _testMode;
+        private readonly string _logFile;
+
+        private readonly object _balanceLock = new object();
+        private double? _cachedBalance;
+        private double? _cachedPurchased;
+
+        /// <summary>
+        /// Create a new kwtSMS client.
+        /// </summary>
+        /// <param name="username">API username (not your account mobile number).</param>
+        /// <param name="password">API password.</param>
+        /// <param name="senderId">Default sender ID shown on recipient's phone. Default: "KWT-SMS" (testing only).</param>
+        /// <param name="testMode">When true, messages queue but are not delivered. No credits consumed.</param>
+        /// <param name="logFile">JSONL log file path. Empty string to disable logging.</param>
+        public KwtSmsClient(
+            string username,
+            string password,
+            string senderId = "KWT-SMS",
+            bool testMode = false,
+            string logFile = "kwtsms.log")
+        {
+            _username = username ?? throw new ArgumentNullException(nameof(username));
+            _password = password ?? throw new ArgumentNullException(nameof(password));
+            _senderId = senderId ?? "KWT-SMS";
+            _testMode = testMode;
+            _logFile = logFile ?? "";
+        }
+
+        /// <summary>
+        /// Create a client from environment variables or a .env file.
+        /// Reads: KWTSMS_USERNAME, KWTSMS_PASSWORD, KWTSMS_SENDER_ID, KWTSMS_TEST_MODE, KWTSMS_LOG_FILE.
+        /// </summary>
+        /// <param name="envFile">Path to .env file. Defaults to ".env".</param>
+        /// <returns>Configured KwtSmsClient instance.</returns>
+        public static KwtSmsClient FromEnv(string envFile = ".env")
+        {
+            var env = EnvLoader.LoadEnvFile(envFile);
+
+            string GetVar(string key, string defaultValue = "")
+            {
+                var val = Environment.GetEnvironmentVariable(key);
+                if (!string.IsNullOrEmpty(val)) return val;
+                if (env.TryGetValue(key, out var envVal) && !string.IsNullOrEmpty(envVal))
+                    return envVal;
+                return defaultValue;
+            }
+
+            var username = GetVar("KWTSMS_USERNAME");
+            var password = GetVar("KWTSMS_PASSWORD");
+            var senderId = GetVar("KWTSMS_SENDER_ID", "KWT-SMS");
+            var testModeStr = GetVar("KWTSMS_TEST_MODE", "0");
+            var logFile = GetVar("KWTSMS_LOG_FILE", "kwtsms.log");
+
+            var testMode = testModeStr == "1" || testModeStr.Equals("true", StringComparison.OrdinalIgnoreCase);
+
+            return new KwtSmsClient(username, password, senderId, testMode, logFile);
+        }
+
+        /// <summary>
+        /// Cached available balance from the last Verify() or successful Send() call.
+        /// Null if no API call has been made yet.
+        /// </summary>
+        public double? CachedBalance
+        {
+            get { lock (_balanceLock) { return _cachedBalance; } }
+        }
+
+        /// <summary>
+        /// Cached total purchased credits from the last Verify() or Balance() call.
+        /// Null if no call has been made yet.
+        /// </summary>
+        public double? CachedPurchased
+        {
+            get { lock (_balanceLock) { return _cachedPurchased; } }
+        }
+
+        /// <summary>
+        /// Test credentials and check balance. Never throws exceptions.
+        /// </summary>
+        /// <returns>Tuple of (ok, balance, error). ok is true if credentials are valid.</returns>
+        public (bool Ok, double? Balance, string? Error) Verify()
+        {
+            try
+            {
+                var payload = AuthPayload();
+                var response = HttpRequest.Post("balance", payload, _logFile);
+
+                var result = response.ContainsKey("result") ? response["result"]?.ToString() : null;
+
+                if (result == "OK")
+                {
+                    var balance = GetDouble(response, "available");
+                    var purchased = GetDouble(response, "purchased");
+
+                    lock (_balanceLock)
+                    {
+                        _cachedBalance = balance;
+                        _cachedPurchased = purchased;
+                    }
+
+                    return (true, balance, null);
+                }
+
+                var error = response.ContainsKey("description")
+                    ? response["description"]?.ToString()
+                    : "Unknown error";
+
+                if (response.ContainsKey("action"))
+                    error += " " + response["action"]?.ToString();
+
+                return (false, null, error);
+            }
+            catch (Exception ex)
+            {
+                return (false, null, $"Connection error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Get current balance. Returns cached value on API failure. Null if no data available.
+        /// </summary>
+        public double? Balance()
+        {
+            try
+            {
+                var payload = AuthPayload();
+                var response = HttpRequest.Post("balance", payload, _logFile);
+
+                var result = response.ContainsKey("result") ? response["result"]?.ToString() : null;
+
+                if (result == "OK")
+                {
+                    var balance = GetDouble(response, "available");
+                    var purchased = GetDouble(response, "purchased");
+
+                    lock (_balanceLock)
+                    {
+                        _cachedBalance = balance;
+                        _cachedPurchased = purchased;
+                    }
+
+                    return balance;
+                }
+
+                // Return cached value on failure
+                lock (_balanceLock)
+                {
+                    return _cachedBalance;
+                }
+            }
+            catch
+            {
+                lock (_balanceLock)
+                {
+                    return _cachedBalance;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Send SMS to one or more phone numbers.
+        /// Numbers are normalized and validated before sending.
+        /// For more than 200 numbers, automatically batches into groups of 200.
+        /// Never throws exceptions.
+        /// </summary>
+        /// <param name="mobile">Phone number(s). Can be a single number, comma-separated, or multiple strings.</param>
+        /// <param name="message">SMS message text. Cleaned automatically (emojis stripped, Arabic digits converted).</param>
+        /// <param name="sender">Optional sender ID override. Uses default if null.</param>
+        /// <returns>SendResult with result, msg-id, balance, or error details.</returns>
+        public SendResult Send(string mobile, string message, string? sender = null)
+        {
+            return Send(new[] { mobile }, message, sender);
+        }
+
+        /// <summary>
+        /// Send SMS to multiple phone numbers.
+        /// </summary>
+        public SendResult Send(string[] mobiles, string message, string? sender = null)
+        {
+            try
+            {
+                // Clean message
+                var cleanedMessage = MessageUtils.CleanMessage(message);
+                if (string.IsNullOrWhiteSpace(cleanedMessage))
+                {
+                    return new SendResult
+                    {
+                        Result = "ERROR",
+                        Code = "ERR009",
+                        Description = "Message is empty after cleaning (emojis, HTML, and control characters were removed).",
+                        Action = ApiErrors.Errors.ContainsKey("ERR009") ? ApiErrors.Errors["ERR009"] : null
+                    };
+                }
+
+                // Parse and validate all numbers
+                var allNumbers = new List<string>();
+                foreach (var m in mobiles)
+                {
+                    if (string.IsNullOrEmpty(m)) continue;
+                    foreach (var part in m.Split(','))
+                    {
+                        var trimmed = part.Trim();
+                        if (!string.IsNullOrEmpty(trimmed))
+                            allNumbers.Add(trimmed);
+                    }
+                }
+
+                var validNumbers = new List<string>();
+                var invalidEntries = new List<InvalidEntry>();
+
+                foreach (var num in allNumbers)
+                {
+                    var validation = PhoneUtils.ValidatePhoneInput(num);
+                    if (validation.IsValid)
+                    {
+                        validNumbers.Add(validation.Normalized);
+                    }
+                    else
+                    {
+                        invalidEntries.Add(new InvalidEntry
+                        {
+                            Input = num,
+                            Error = validation.Error ?? "Invalid phone number"
+                        });
+                    }
+                }
+
+                // Deduplicate normalized numbers
+                validNumbers = validNumbers.Distinct().ToList();
+
+                // All numbers invalid
+                if (validNumbers.Count == 0)
+                {
+                    return new SendResult
+                    {
+                        Result = "ERROR",
+                        Code = "ERR_INVALID_INPUT",
+                        Description = "No valid phone numbers provided.",
+                        Action = ApiErrors.Errors.ContainsKey("ERR_INVALID_INPUT") ? ApiErrors.Errors["ERR_INVALID_INPUT"] : null,
+                        Invalid = invalidEntries.Count > 0 ? invalidEntries : null
+                    };
+                }
+
+                // Bulk send for >200 numbers
+                if (validNumbers.Count > 200)
+                {
+                    return SendBulk(validNumbers, cleanedMessage, sender ?? _senderId, invalidEntries);
+                }
+
+                // Single send
+                var payload = AuthPayload();
+                payload["sender"] = sender ?? _senderId;
+                payload["mobile"] = string.Join(",", validNumbers);
+                payload["message"] = cleanedMessage;
+                payload["test"] = _testMode ? "1" : "0";
+
+                var response = HttpRequest.Post("send", payload, _logFile);
+
+                var sendResult = new SendResult
+                {
+                    Result = response.ContainsKey("result") ? response["result"]?.ToString() ?? "" : "",
+                    Invalid = invalidEntries.Count > 0 ? invalidEntries : null
+                };
+
+                if (sendResult.Result == "OK")
+                {
+                    sendResult.MsgId = response.ContainsKey("msg-id") ? response["msg-id"]?.ToString() : null;
+                    sendResult.Numbers = GetInt(response, "numbers");
+                    sendResult.PointsCharged = GetInt(response, "points-charged");
+                    sendResult.BalanceAfter = GetDouble(response, "balance-after");
+                    sendResult.UnixTimestamp = GetLong(response, "unix-timestamp");
+
+                    if (sendResult.BalanceAfter.HasValue)
+                    {
+                        lock (_balanceLock) { _cachedBalance = sendResult.BalanceAfter; }
+                    }
+                }
+                else
+                {
+                    sendResult.Code = response.ContainsKey("code") ? response["code"]?.ToString() : null;
+                    sendResult.Description = response.ContainsKey("description") ? response["description"]?.ToString() : null;
+                    sendResult.Action = response.ContainsKey("action") ? response["action"]?.ToString() : null;
+                }
+
+                return sendResult;
+            }
+            catch (Exception ex)
+            {
+                return new SendResult
+                {
+                    Result = "ERROR",
+                    Code = "CLIENT_ERROR",
+                    Description = $"Client error: {ex.Message}"
+                };
+            }
+        }
+
+        /// <summary>
+        /// Send SMS with automatic retry on ERR028 (rate limit).
+        /// Sleeps 16 seconds between retries.
+        /// </summary>
+        /// <param name="mobile">Phone number(s).</param>
+        /// <param name="message">SMS message text.</param>
+        /// <param name="sender">Optional sender ID override.</param>
+        /// <param name="maxRetries">Maximum number of retries (default 3).</param>
+        /// <returns>SendResult.</returns>
+        public SendResult SendWithRetry(string mobile, string message, string? sender = null, int maxRetries = 3)
+        {
+            var result = Send(mobile, message, sender);
+
+            for (int attempt = 0; attempt < maxRetries; attempt++)
+            {
+                if (result.Code != "ERR028") break;
+                Thread.Sleep(16000); // 16 seconds (API requires 15s minimum)
+                result = Send(mobile, message, sender);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Validate phone numbers via the kwtSMS API.
+        /// Pre-rejects invalid numbers locally before calling the API.
+        /// </summary>
+        /// <param name="phones">Phone numbers to validate.</param>
+        /// <returns>ValidateResult with ok, er, nr lists and rejected numbers.</returns>
+        public ValidateResult Validate(params string[] phones)
+        {
+            try
+            {
+                var validNumbers = new List<string>();
+                var rejected = new List<InvalidEntry>();
+
+                foreach (var phone in phones)
+                {
+                    if (string.IsNullOrEmpty(phone)) continue;
+
+                    foreach (var part in phone.Split(','))
+                    {
+                        var trimmed = part.Trim();
+                        if (string.IsNullOrEmpty(trimmed)) continue;
+
+                        var validation = PhoneUtils.ValidatePhoneInput(trimmed);
+                        if (validation.IsValid)
+                        {
+                            validNumbers.Add(validation.Normalized);
+                        }
+                        else
+                        {
+                            rejected.Add(new InvalidEntry
+                            {
+                                Input = trimmed,
+                                Error = validation.Error ?? "Invalid"
+                            });
+                        }
+                    }
+                }
+
+                // Deduplicate
+                validNumbers = validNumbers.Distinct().ToList();
+
+                if (validNumbers.Count == 0)
+                {
+                    return new ValidateResult
+                    {
+                        Error = "No valid phone numbers to validate.",
+                        Rejected = rejected
+                    };
+                }
+
+                var payload = AuthPayload();
+                payload["mobile"] = string.Join(",", validNumbers);
+
+                var response = HttpRequest.Post("validate", payload, _logFile);
+
+                var validateResult = new ValidateResult { Rejected = rejected };
+
+                var result = response.ContainsKey("result") ? response["result"]?.ToString() : null;
+
+                if (result == "OK" && response.ContainsKey("mobile"))
+                {
+                    var mobileData = response["mobile"];
+                    if (mobileData is Dictionary<string, object?> mobileDict)
+                    {
+                        validateResult.Ok = GetStringList(mobileDict, "OK");
+                        validateResult.Er = GetStringList(mobileDict, "ER");
+                        validateResult.Nr = GetStringList(mobileDict, "NR");
+                    }
+
+                    validateResult.Raw = response;
+                }
+                else
+                {
+                    validateResult.Error = response.ContainsKey("description")
+                        ? response["description"]?.ToString()
+                        : "Validation failed";
+                    validateResult.Raw = response;
+                }
+
+                return validateResult;
+            }
+            catch (Exception ex)
+            {
+                return new ValidateResult
+                {
+                    Error = $"Client error: {ex.Message}"
+                };
+            }
+        }
+
+        /// <summary>
+        /// List sender IDs registered on this account.
+        /// </summary>
+        public SenderIdResult SenderIds()
+        {
+            try
+            {
+                var payload = AuthPayload();
+                var response = HttpRequest.Post("senderid", payload, _logFile);
+
+                var result = response.ContainsKey("result") ? response["result"]?.ToString() : null;
+
+                if (result == "OK")
+                {
+                    return new SenderIdResult
+                    {
+                        Result = "OK",
+                        SenderIds = GetStringList(response, "senderid")
+                    };
+                }
+
+                return new SenderIdResult
+                {
+                    Result = "ERROR",
+                    Code = response.ContainsKey("code") ? response["code"]?.ToString() : null,
+                    Description = response.ContainsKey("description") ? response["description"]?.ToString() : null,
+                    Action = response.ContainsKey("action") ? response["action"]?.ToString() : null
+                };
+            }
+            catch (Exception ex)
+            {
+                return new SenderIdResult
+                {
+                    Result = "ERROR",
+                    Description = $"Client error: {ex.Message}"
+                };
+            }
+        }
+
+        /// <summary>
+        /// List active country prefixes for SMS delivery.
+        /// </summary>
+        public CoverageResult Coverage()
+        {
+            try
+            {
+                var payload = AuthPayload();
+                var response = HttpRequest.Post("coverage", payload, _logFile);
+
+                var result = response.ContainsKey("result") ? response["result"]?.ToString() : null;
+
+                if (result == "OK")
+                {
+                    return new CoverageResult
+                    {
+                        Result = "OK",
+                        Prefixes = GetStringList(response, "prefixes")
+                    };
+                }
+
+                return new CoverageResult
+                {
+                    Result = "ERROR",
+                    Code = response.ContainsKey("code") ? response["code"]?.ToString() : null,
+                    Description = response.ContainsKey("description") ? response["description"]?.ToString() : null,
+                    Action = response.ContainsKey("action") ? response["action"]?.ToString() : null
+                };
+            }
+            catch (Exception ex)
+            {
+                return new CoverageResult
+                {
+                    Result = "ERROR",
+                    Description = $"Client error: {ex.Message}"
+                };
+            }
+        }
+
+        /// <summary>
+        /// Check message delivery status.
+        /// </summary>
+        /// <param name="msgId">Message ID from a previous Send() response.</param>
+        public StatusResult Status(string msgId)
+        {
+            try
+            {
+                var payload = AuthPayload();
+                payload["msgid"] = msgId;
+
+                var response = HttpRequest.Post("status", payload, _logFile);
+
+                var result = response.ContainsKey("result") ? response["result"]?.ToString() : null;
+
+                if (result == "OK")
+                {
+                    return new StatusResult
+                    {
+                        Result = "OK",
+                        Status = response.ContainsKey("status") ? response["status"]?.ToString() : null,
+                        Description = response.ContainsKey("description") ? response["description"]?.ToString() : null
+                    };
+                }
+
+                return new StatusResult
+                {
+                    Result = "ERROR",
+                    Code = response.ContainsKey("code") ? response["code"]?.ToString() : null,
+                    Description = response.ContainsKey("description") ? response["description"]?.ToString() : null,
+                    Action = response.ContainsKey("action") ? response["action"]?.ToString() : null
+                };
+            }
+            catch (Exception ex)
+            {
+                return new StatusResult
+                {
+                    Result = "ERROR",
+                    Description = $"Client error: {ex.Message}"
+                };
+            }
+        }
+
+        /// <summary>
+        /// Get delivery report for a message (international numbers only, not available for Kuwait).
+        /// Wait at least 5 minutes after sending before checking.
+        /// </summary>
+        /// <param name="msgId">Message ID from a previous Send() response.</param>
+        public DlrResult Dlr(string msgId)
+        {
+            try
+            {
+                var payload = AuthPayload();
+                payload["msgid"] = msgId;
+
+                var response = HttpRequest.Post("dlr", payload, _logFile);
+
+                var result = response.ContainsKey("result") ? response["result"]?.ToString() : null;
+
+                if (result == "OK")
+                {
+                    var dlrResult = new DlrResult { Result = "OK" };
+
+                    if (response.ContainsKey("report") && response["report"] is List<object?> reportList)
+                    {
+                        foreach (var item in reportList)
+                        {
+                            if (item is Dictionary<string, object?> entry)
+                            {
+                                dlrResult.Report.Add(new DlrEntry
+                                {
+                                    Number = entry.ContainsKey("Number") ? entry["Number"]?.ToString() ?? "" : "",
+                                    Status = entry.ContainsKey("Status") ? entry["Status"]?.ToString() ?? "" : ""
+                                });
+                            }
+                        }
+                    }
+
+                    return dlrResult;
+                }
+
+                return new DlrResult
+                {
+                    Result = "ERROR",
+                    Code = response.ContainsKey("code") ? response["code"]?.ToString() : null,
+                    Description = response.ContainsKey("description") ? response["description"]?.ToString() : null,
+                    Action = response.ContainsKey("action") ? response["action"]?.ToString() : null
+                };
+            }
+            catch (Exception ex)
+            {
+                return new DlrResult
+                {
+                    Result = "ERROR",
+                    Description = $"Client error: {ex.Message}"
+                };
+            }
+        }
+
+        #region Private helpers
+
+        private SendResult SendBulk(List<string> numbers, string message, string sender, List<InvalidEntry> invalidEntries)
+        {
+            var batches = new List<List<string>>();
+            for (int i = 0; i < numbers.Count; i += 200)
+            {
+                batches.Add(numbers.GetRange(i, Math.Min(200, numbers.Count - i)));
+            }
+
+            var msgIds = new List<string>();
+            var errors = new List<Dictionary<string, object?>>();
+            int totalNumbers = 0;
+            int totalPoints = 0;
+            double? lastBalance = null;
+
+            for (int batchIdx = 0; batchIdx < batches.Count; batchIdx++)
+            {
+                // Rate limit: 0.5s between batches
+                if (batchIdx > 0) Thread.Sleep(500);
+
+                var batch = batches[batchIdx];
+                var batchResult = SendBatchWithRetry(batch, message, sender);
+
+                if (batchResult.ContainsKey("result") && batchResult["result"]?.ToString() == "OK")
+                {
+                    if (batchResult.ContainsKey("msg-id"))
+                        msgIds.Add(batchResult["msg-id"]?.ToString() ?? "");
+
+                    totalNumbers += GetIntFromDict(batchResult, "numbers");
+                    totalPoints += GetIntFromDict(batchResult, "points-charged");
+
+                    var bal = GetDoubleFromDict(batchResult, "balance-after");
+                    if (bal.HasValue) lastBalance = bal;
+                }
+                else
+                {
+                    var errDict = new Dictionary<string, object?>
+                    {
+                        ["batch"] = batchIdx + 1,
+                        ["numbers"] = string.Join(",", batch)
+                    };
+                    if (batchResult.ContainsKey("code"))
+                        errDict["code"] = batchResult["code"]?.ToString() ?? "";
+                    if (batchResult.ContainsKey("description"))
+                        errDict["description"] = batchResult["description"]?.ToString() ?? "";
+                    errors.Add(errDict);
+                }
+            }
+
+            if (lastBalance.HasValue)
+            {
+                lock (_balanceLock) { _cachedBalance = lastBalance; }
+            }
+
+            string overallResult;
+            if (errors.Count == 0)
+                overallResult = "OK";
+            else if (msgIds.Count > 0)
+                overallResult = "PARTIAL";
+            else
+                overallResult = "ERROR";
+
+            // Return as SendResult with bulk info in description
+            return new SendResult
+            {
+                Result = overallResult,
+                MsgId = msgIds.Count > 0 ? string.Join(",", msgIds) : null,
+                Numbers = totalNumbers,
+                PointsCharged = totalPoints,
+                BalanceAfter = lastBalance,
+                Invalid = invalidEntries.Count > 0 ? invalidEntries : null,
+                Description = overallResult == "PARTIAL"
+                    ? $"Bulk send completed with {errors.Count} failed batch(es) out of {batches.Count}."
+                    : overallResult == "ERROR"
+                        ? $"All {batches.Count} batches failed."
+                        : null
+            };
+        }
+
+        private Dictionary<string, object?> SendBatchWithRetry(List<string> numbers, string message, string sender)
+        {
+            var backoffMs = new[] { 30000, 60000, 120000 };
+
+            var payload = AuthPayload();
+            payload["sender"] = sender;
+            payload["mobile"] = string.Join(",", numbers);
+            payload["message"] = message;
+            payload["test"] = _testMode ? "1" : "0";
+
+            var response = HttpRequest.Post("send", payload, _logFile);
+
+            for (int retry = 0; retry < 3; retry++)
+            {
+                if (!response.ContainsKey("code") || response["code"]?.ToString() != "ERR013")
+                    break;
+
+                Thread.Sleep(backoffMs[retry]);
+                response = HttpRequest.Post("send", payload, _logFile);
+            }
+
+            return response;
+        }
+
+        private Dictionary<string, object?> AuthPayload()
+        {
+            return new Dictionary<string, object?>
+            {
+                ["username"] = _username,
+                ["password"] = _password
+            };
+        }
+
+        private static double? GetDouble(Dictionary<string, object?> dict, string key)
+        {
+            if (!dict.ContainsKey(key) || dict[key] == null) return null;
+
+            var val = dict[key]!;
+            if (val is double d) return d;
+            if (val is long l) return l;
+            if (val is int i) return i;
+            if (double.TryParse(val.ToString(), out var parsed)) return parsed;
+            return null;
+        }
+
+        private static int? GetInt(Dictionary<string, object?> dict, string key)
+        {
+            if (!dict.ContainsKey(key) || dict[key] == null) return null;
+
+            var val = dict[key]!;
+            if (val is int i) return i;
+            if (val is long l) return (int)l;
+            if (val is double d) return (int)d;
+            if (int.TryParse(val.ToString(), out var parsed)) return parsed;
+            return null;
+        }
+
+        private static long? GetLong(Dictionary<string, object?> dict, string key)
+        {
+            if (!dict.ContainsKey(key) || dict[key] == null) return null;
+
+            var val = dict[key]!;
+            if (val is long l) return l;
+            if (val is int i) return i;
+            if (val is double d) return (long)d;
+            if (long.TryParse(val.ToString(), out var parsed)) return parsed;
+            return null;
+        }
+
+        private static int GetIntFromDict(Dictionary<string, object?> dict, string key)
+        {
+            return GetInt(dict, key) ?? 0;
+        }
+
+        private static double? GetDoubleFromDict(Dictionary<string, object?> dict, string key)
+        {
+            return GetDouble(dict, key);
+        }
+
+        private static List<string> GetStringList(Dictionary<string, object?> dict, string key)
+        {
+            if (!dict.ContainsKey(key) || dict[key] == null)
+                return new List<string>();
+
+            if (dict[key] is List<object?> list)
+            {
+                return list
+                    .Where(x => x != null)
+                    .Select(x => x!.ToString()!)
+                    .ToList();
+            }
+
+            return new List<string>();
+        }
+
+        #endregion
+    }
+}
