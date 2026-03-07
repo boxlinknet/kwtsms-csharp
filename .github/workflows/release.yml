@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Get current version
+        id: current
+        run: |
+          VERSION=$(grep -oP '<Version>\K[^<]+' src/KwtSMS/KwtSMS.csproj)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Compute next version
+        id: next
+        run: |
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${{ steps.current.outputs.VERSION }}"
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEXT="$MAJOR.$MINOR.$PATCH"
+          echo "VERSION=$NEXT" >> $GITHUB_OUTPUT
+          echo "Next version: $NEXT"
+
+      - name: Bump version in .csproj files
+        run: |
+          sed -i "s|<Version>${{ steps.current.outputs.VERSION }}</Version>|<Version>${{ steps.next.outputs.VERSION }}</Version>|g" \
+            src/KwtSMS/KwtSMS.csproj \
+            tools/KwtSMS.Cli/KwtSMS.Cli.csproj
+
+      - name: Run tests before release
+        run: |
+          dotnet restore
+          dotnet build --configuration Release --no-restore
+          dotnet test --configuration Release --no-build --filter "Category!=Integration"
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/KwtSMS/KwtSMS.csproj tools/KwtSMS.Cli/KwtSMS.Cli.csproj
+          git commit -m "Release v${{ steps.next.outputs.VERSION }}"
+          git tag "v${{ steps.next.outputs.VERSION }}"
+          git push origin main --tags
