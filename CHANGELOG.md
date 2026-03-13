@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-13
+
+### Removed
+
+- CLI tool (`tools/KwtSMS.Cli`): replaced by the dedicated cross-platform [kwtsms-cli](https://github.com/boxlinknet/kwtsms-cli) standalone binary.
+
+---
+
 ## [0.3.0] - 2026-03-07
 
 ### Added
