@@ -134,7 +134,8 @@ namespace KwtSMS
             }
             catch (Exception ex)
             {
-                return (false, null, $"Connection error: {ex.Message}");
+                Logger.WriteLog(_logFile, "balance", null, null, false, $"Verify error: {ex.Message}");
+                return (false, null, "Could not connect to the SMS service. Check your network connection.");
             }
         }
 
@@ -308,11 +309,12 @@ namespace KwtSMS
             }
             catch (Exception ex)
             {
+                Logger.WriteLog(_logFile, "send", null, null, false, $"Send error: {ex.Message}");
                 return new SendResult
                 {
                     Result = "ERROR",
                     Code = "CLIENT_ERROR",
-                    Description = $"Client error: {ex.Message}"
+                    Description = "An unexpected error occurred in the SMS client."
                 };
             }
         }
@@ -428,9 +430,10 @@ namespace KwtSMS
             }
             catch (Exception ex)
             {
+                Logger.WriteLog(_logFile, "validate", null, null, false, $"Validate error: {ex.Message}");
                 return new ValidateResult
                 {
-                    Error = $"Client error: {ex.Message}"
+                    Error = "An unexpected error occurred in the SMS client."
                 };
             }
         }
@@ -466,10 +469,11 @@ namespace KwtSMS
             }
             catch (Exception ex)
             {
+                Logger.WriteLog(_logFile, "senderid", null, null, false, $"SenderIds error: {ex.Message}");
                 return new SenderIdResult
                 {
                     Result = "ERROR",
-                    Description = $"Client error: {ex.Message}"
+                    Description = "An unexpected error occurred in the SMS client."
                 };
             }
         }
@@ -505,10 +509,11 @@ namespace KwtSMS
             }
             catch (Exception ex)
             {
+                Logger.WriteLog(_logFile, "coverage", null, null, false, $"Coverage error: {ex.Message}");
                 return new CoverageResult
                 {
                     Result = "ERROR",
-                    Description = $"Client error: {ex.Message}"
+                    Description = "An unexpected error occurred in the SMS client."
                 };
             }
         }
@@ -548,10 +553,11 @@ namespace KwtSMS
             }
             catch (Exception ex)
             {
+                Logger.WriteLog(_logFile, "status", null, null, false, $"Status error: {ex.Message}");
                 return new StatusResult
                 {
                     Result = "ERROR",
-                    Description = $"Client error: {ex.Message}"
+                    Description = "An unexpected error occurred in the SMS client."
                 };
             }
         }
@@ -604,10 +610,11 @@ namespace KwtSMS
             }
             catch (Exception ex)
             {
+                Logger.WriteLog(_logFile, "dlr", null, null, false, $"Dlr error: {ex.Message}");
                 return new DlrResult
                 {
                     Result = "ERROR",
-                    Description = $"Client error: {ex.Message}"
+                    Description = "An unexpected error occurred in the SMS client."
                 };
             }
         }

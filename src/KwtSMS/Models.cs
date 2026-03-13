@@ -67,39 +67,6 @@ namespace KwtSMS
     }
 
     /// <summary>
-    /// Result of a bulk send operation (more than 200 numbers).
-    /// </summary>
-    public class BulkSendResult
-    {
-        /// <summary>"OK", "PARTIAL", or "ERROR".</summary>
-        public string Result { get; set; } = "";
-
-        /// <summary>Whether this was a bulk (batched) send.</summary>
-        public bool Bulk { get; set; } = true;
-
-        /// <summary>Number of batches sent.</summary>
-        public int Batches { get; set; }
-
-        /// <summary>Message IDs from all successful batches.</summary>
-        public List<string> MsgIds { get; set; } = new List<string>();
-
-        /// <summary>Total numbers accepted across all batches.</summary>
-        public int Numbers { get; set; }
-
-        /// <summary>Total credits deducted across all batches.</summary>
-        public int PointsCharged { get; set; }
-
-        /// <summary>Final balance after all batches.</summary>
-        public double? BalanceAfter { get; set; }
-
-        /// <summary>Errors from failed batches.</summary>
-        public List<Dictionary<string, object?>> Errors { get; set; } = new List<Dictionary<string, object?>>();
-
-        /// <summary>Numbers that failed local validation.</summary>
-        public List<InvalidEntry>? Invalid { get; set; }
-    }
-
-    /// <summary>
     /// Result of a validate operation.
     /// </summary>
     public class ValidateResult

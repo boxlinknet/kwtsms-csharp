@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-13
+
+### Fixed
+
+- All public method catch blocks now return generic error messages instead of leaking `ex.Message` internals. Real exception details logged to file only.
+- `InvariantCulture` for all `TryParse` calls in `KwtSmsClient`, preventing null balance on non-English locales.
+- Thread-safe JSONL logging with write lock in `Logger`.
+- Added `[CollectionDefinition("HttpClient", DisableParallelization = true)]` backing class for test isolation.
+- PRD updated to match actual code: project structure, utility functions, bulk send result type, class names, validation rules.
+
+### Removed
+
+- Unused `BulkSendResult` class (bulk sends use `SendResult`).
+- Unused `Moq` dependency from test project.
+
+---
+
 ## [0.5.0] - 2026-03-13
 
 ### Added

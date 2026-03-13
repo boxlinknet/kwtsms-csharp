@@ -44,7 +44,7 @@ dotnet add package KwtSMS
 Or add to your `.csproj`:
 
 ```xml
-<PackageReference Include="KwtSMS" Version="0.5.0" />
+<PackageReference Include="KwtSMS" Version="0.6.0" />
 ```
 
 ## Install

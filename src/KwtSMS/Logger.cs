@@ -10,9 +10,11 @@ namespace KwtSMS
     /// </summary>
     internal static class Logger
     {
+        private static readonly object _writeLock = new object();
+
         /// <summary>
         /// Write a JSONL log entry. Masks password in the request payload.
-        /// Never throws exceptions.
+        /// Thread-safe. Never throws exceptions.
         /// </summary>
         internal static void WriteLog(
             string logFile,
@@ -39,7 +41,10 @@ namespace KwtSMS
                 };
 
                 var json = JsonSerializer.Serialize(entry);
-                File.AppendAllText(logFile, json + "\n");
+                lock (_writeLock)
+                {
+                    File.AppendAllText(logFile, json + "\n");
+                }
             }
             catch
             {
