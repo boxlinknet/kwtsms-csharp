@@ -93,25 +93,28 @@ namespace KwtSMS
             }
             catch (HttpRequestException ex)
             {
+                // Log the real exception detail; return a generic message to the caller
+                // to avoid leaking internal service URLs or infrastructure details.
+                errorMsg = $"Network error: {ex.Message}";
                 response = new Dictionary<string, object?>
                 {
                     ["result"] = "ERROR",
                     ["code"] = "NETWORK_ERROR",
-                    ["description"] = $"Network error: {ex.Message}"
+                    ["description"] = "Could not connect to the SMS service. Check your network connection."
                 };
-                errorMsg = response["description"]?.ToString();
                 Logger.WriteLog(logFile, endpoint, payload, response, false, errorMsg);
                 return ApiErrors.EnrichError(response);
             }
             catch (Exception ex)
             {
+                // Log the real exception detail; return a generic message to the caller.
+                errorMsg = $"Client error: {ex.Message}";
                 response = new Dictionary<string, object?>
                 {
                     ["result"] = "ERROR",
                     ["code"] = "CLIENT_ERROR",
-                    ["description"] = $"Client error: {ex.Message}"
+                    ["description"] = "An unexpected error occurred in the SMS client."
                 };
-                errorMsg = response["description"]?.ToString();
                 Logger.WriteLog(logFile, endpoint, payload, response, false, errorMsg);
                 return ApiErrors.EnrichError(response);
             }

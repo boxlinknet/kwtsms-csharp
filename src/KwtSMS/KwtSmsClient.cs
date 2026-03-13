@@ -326,6 +326,11 @@ namespace KwtSMS
         /// <param name="sender">Optional sender ID override.</param>
         /// <param name="maxRetries">Maximum number of retries (default 3).</param>
         /// <returns>SendResult.</returns>
+        /// <remarks>
+        /// WARNING: each retry sleeps the calling thread for 16 seconds (API requires 15s minimum
+        /// between sends to the same number). With maxRetries=3 this can block for up to 48 seconds.
+        /// Do not call this method on an ASP.NET Core request thread. Use a background job instead.
+        /// </remarks>
         public SendResult SendWithRetry(string mobile, string message, string? sender = null, int maxRetries = 3)
         {
             var result = Send(mobile, message, sender);
@@ -728,7 +733,7 @@ namespace KwtSMS
             if (val is double d) return d;
             if (val is long l) return l;
             if (val is int i) return i;
-            if (double.TryParse(val.ToString(), out var parsed)) return parsed;
+            if (double.TryParse(val.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed)) return parsed;
             return null;
         }
 
@@ -740,7 +745,7 @@ namespace KwtSMS
             if (val is int i) return i;
             if (val is long l) return (int)l;
             if (val is double d) return (int)d;
-            if (int.TryParse(val.ToString(), out var parsed)) return parsed;
+            if (int.TryParse(val.ToString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed)) return parsed;
             return null;
         }
 
@@ -752,7 +757,7 @@ namespace KwtSMS
             if (val is long l) return l;
             if (val is int i) return i;
             if (val is double d) return (long)d;
-            if (long.TryParse(val.ToString(), out var parsed)) return parsed;
+            if (long.TryParse(val.ToString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed)) return parsed;
             return null;
         }
 

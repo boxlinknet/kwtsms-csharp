@@ -11,6 +11,13 @@ using KwtSMS;
 namespace KwtSMS.Tests
 {
     /// <summary>
+    /// Serializes all test classes that share the static HttpClient.
+    /// Prevents races between tests that swap HttpRequest.Client.
+    /// </summary>
+    [CollectionDefinition("HttpClient", DisableParallelization = true)]
+    public class HttpClientCollection { }
+
+    /// <summary>
     /// Tests for KwtSmsClient using mocked HTTP responses.
     /// No network calls are made.
     /// </summary>
