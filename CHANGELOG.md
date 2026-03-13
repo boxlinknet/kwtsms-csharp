@@ -10,9 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Raw API example (`examples/RawApi/`): call every kwtSMS endpoint directly with HttpClient, no library needed.
-- CLI setup wizard: credential verification, sender ID selection, send mode menu, log file config, auto-setup on first run.
-- CLI tests: 20 test cases covering all CLI commands with mocked HTTP.
-- Live bulk send integration tests: 250 numbers (200+50 batches) for both client library and CLI tool.
+- Live bulk send integration tests: 250 numbers (200+50 batches) for the client library.
 - Pre-flight balance check and exact credit verification in bulk tests.
 - `[Collection("HttpClient")]` test isolation for shared static state.
 
@@ -24,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- CLI tool (`tools/KwtSMS.Cli`) with all commands: verify, balance, send, validate, senderid, coverage, status, dlr.
 - About kwtSMS section with signup link in README.
 - Prerequisites section with .NET install instructions.
 - Phone Number Formats table with Arabic-Indic examples.
