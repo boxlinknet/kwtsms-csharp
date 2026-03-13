@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-13
+
+### Added
+
+- Per-country phone validation: `PHONE_RULES` table covering 70+ countries with local number length and mobile prefix rules.
+- `FindCountryCode()`: longest-match country code detection (3-digit, 2-digit, 1-digit).
+- `ValidatePhoneFormat()`: per-country length and mobile prefix validation.
+- `PhoneRule` public class.
+- Domestic trunk prefix stripping in `NormalizePhone()`: e.g. `9660551234567` → `966551234567` (Saudi), `9710501234567` → `971501234567` (UAE).
+- 15 new unit tests covering trunk stripping, country format, `FindCountryCode`, and `ValidatePhoneFormat`. Total: 115 tests.
+
+---
+
 ## [0.4.0] - 2026-03-13
 
 ### Removed
